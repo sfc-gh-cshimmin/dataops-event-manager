@@ -72,7 +72,7 @@ def render(client: DataOpsClient):
 
         st.subheader("Event Details")
         name = st.text_input("Event Name", value=prefill["name"])
-        location = st.text_input("Location")
+        location = st.text_input("Location", value="Virtual")
         delivery_format = st.text_input("Delivery Format", value=prefill["delivery_format"])
 
         st.subheader("Dates")
