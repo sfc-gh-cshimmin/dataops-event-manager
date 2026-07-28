@@ -59,12 +59,27 @@ def render(client: DataOpsClient):
             icon="ℹ️",
         )
 
+    if has_prefill and prefill["slug"]:
+        # Auto-check slug availability when pre-filled from HOL tracker
+        try:
+            client.get_event(prefill["slug"])
+            st.warning(
+                f"⚠️ Slug `{prefill['slug']}` is already in use. "
+                "Edit the Event Slug field below before submitting.",
+            )
+        except DataOpsAPIError as _e:
+            if _e.status_code == 404:
+                st.success(f"✅ Slug `{prefill['slug']}` is available.", icon="✅")
+            # Other errors (auth, network) — silently skip
+        except Exception:
+            pass
+
     with st.form("create_event_form"):
         st.subheader("Required Fields")
         slug = st.text_input(
             "Event Slug*",
             value=prefill["slug"],
-            help="Max 48 chars, lowercase, starts with a letter, alphanumerics and hyphens only",
+            help="Max 31 chars, lowercase, starts with a letter, alphanumerics and hyphens only",
         )
         decommission_date = st.date_input(
             "Decommission Date*",

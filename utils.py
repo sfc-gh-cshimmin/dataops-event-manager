@@ -8,8 +8,8 @@ def validate_slug(slug: str) -> tuple[bool, str]:
     """Validate an event slug. Returns (is_valid, error_message)."""
     if not slug:
         return False, "Slug is required."
-    if len(slug) > 48:
-        return False, f"Slug must be at most 48 characters (got {len(slug)})."
+    if len(slug) > 31:
+        return False, f"Slug must be at most 31 characters (got {len(slug)})."
     if not slug[0].isalpha():
         return False, "Slug must start with a letter."
     if slug != slug.lower():
@@ -46,7 +46,7 @@ def slugify_hol_name(name: str) -> str:
     if slug and not slug[0].isalpha():
         slug = "a" + slug
     # Enforce max length
-    slug = slug[:48]
+    slug = slug[:31]
     # Re-strip trailing hyphen that truncation might create
     slug = slug.rstrip("-")
     return slug
