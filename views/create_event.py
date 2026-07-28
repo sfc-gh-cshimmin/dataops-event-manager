@@ -43,6 +43,7 @@ def _read_prefill() -> dict:
         "attendee_name":     qp.get("attendee_name", ""),
         "region":            qp.get("region", "").lower(),
         "delivery_format":   qp.get("delivery_format", ""),
+        "configure_project": qp.get("configure_project", ""),
     }
 
 
@@ -101,7 +102,17 @@ def render(client: DataOpsClient):
             )
             instructor_reconfigure = st.checkbox("Instructor Reconfigure")
 
-        configure_project = st.text_input("DataOps Configure Project Path", help="e.g. org/group/project")
+        configure_project = st.text_input(
+            "DataOps Configure Project Path",
+            value=prefill["configure_project"],
+            key="configure_project",
+            help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
+        )
+        if prefill["configure_project"] and "default-event-configuration-" in prefill["configure_project"]:
+            st.caption(
+                "Path pre-generated for a custom event. Fork the parent repo in GitLab "
+                "before submitting."
+            )
         allowed_domains = st.text_input("Allowed Email Domains", help="Comma-separated, e.g. snowflake.com, acme.org")
 
         # Attendee pre-fill (shown read-only so user knows what will be submitted)
