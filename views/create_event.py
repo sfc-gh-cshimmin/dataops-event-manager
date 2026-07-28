@@ -41,6 +41,8 @@ def _read_prefill() -> dict:
         "pool_size":         int(qp["pool_size"]) if qp.get("pool_size", "").isdigit() else 0,
         "attendee_email":    qp.get("attendee_email", ""),
         "attendee_name":     qp.get("attendee_name", ""),
+        "region":            qp.get("region", "").lower(),
+        "delivery_format":   qp.get("delivery_format", ""),
     }
 
 
@@ -71,7 +73,7 @@ def render(client: DataOpsClient):
         st.subheader("Event Details")
         name = st.text_input("Event Name", value=prefill["name"])
         location = st.text_input("Location")
-        delivery_format = st.text_input("Delivery Format")
+        delivery_format = st.text_input("Delivery Format", value=prefill["delivery_format"])
 
         st.subheader("Dates")
         col1, col2, col3 = st.columns(3)
@@ -87,7 +89,10 @@ def render(client: DataOpsClient):
         with col_a:
             pool_size = st.number_input("Pool Size", min_value=0, value=prefill["pool_size"], step=1)
             edition = st.selectbox("Snowflake Edition", EDITION_OPTIONS, index=0)
-            region = st.selectbox("Region Group", REGION_OPTIONS, index=0)
+            region = st.selectbox(
+                "Region Group", REGION_OPTIONS,
+                index=REGION_OPTIONS.index(prefill["region"]) if prefill["region"] in REGION_OPTIONS else 0,
+            )
         with col_b:
             is_express = st.checkbox("Express Mode")
             express_hours = st.number_input(
