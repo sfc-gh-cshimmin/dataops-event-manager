@@ -73,7 +73,9 @@ def render(client: DataOpsClient):
         if slug_valid:
             try:
                 client.get_event(slug)
-                st.warning(f"⚠️ Slug `{slug}` is already taken. Edit the field above before submitting.")
+                event_url = f"https://snowflake.dataops.live/event-deployments/{slug}"
+                st.warning(f"⚠️ Slug `{slug}` is already taken — this event likely already exists.")
+                st.info(f"If the HOL URL is missing in the HOL Request Tracker, copy this: `{event_url}`")
             except DataOpsAPIError as _ce:
                 if _ce.status_code == 404:
                     st.success(f"✅ Slug `{slug}` is available.")
