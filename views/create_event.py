@@ -59,28 +59,30 @@ def render(client: DataOpsClient):
             icon="ℹ️",
         )
 
-    if has_prefill and prefill["slug"]:
-        # Auto-check slug availability when pre-filled from HOL tracker
-        try:
-            client.get_event(prefill["slug"])
-            st.warning(
-                f"⚠️ Slug `{prefill['slug']}` is already in use. "
-                "Edit the Event Slug field below before submitting.",
-            )
-        except DataOpsAPIError as _e:
-            if _e.status_code == 404:
-                st.success(f"✅ Slug `{prefill['slug']}` is available.", icon="✅")
-            # Other errors (auth, network) — silently skip
-        except Exception:
-            pass
+    # Slug field lives outside the form so availability is checked on every keystroke
+    st.subheader("Event Slug")
+    slug = st.text_input(
+        "Event Slug*",
+        value=prefill["slug"],
+        key="slug_input",
+        help="Max 31 chars, lowercase, starts with a letter, alphanumerics and hyphens only.",
+    )
+    if slug:
+        slug_valid, slug_err = validate_slug(slug)
+        if slug_valid:
+            try:
+                client.get_event(slug)
+                st.warning(f"⚠️ Slug `{slug}` is already taken. Edit the field above before submitting.")
+            except DataOpsAPIError as _ce:
+                if _ce.status_code == 404:
+                    st.success(f"✅ Slug `{slug}` is available.")
+            except Exception:
+                pass
+        else:
+            st.caption(f"🔴 {slug_err}")
 
     with st.form("create_event_form"):
         st.subheader("Required Fields")
-        slug = st.text_input(
-            "Event Slug*",
-            value=prefill["slug"],
-            help="Max 31 chars, lowercase, starts with a letter, alphanumerics and hyphens only",
-        )
         decommission_date = st.date_input(
             "Decommission Date*",
             value=prefill["decommission_date"],
@@ -142,6 +144,8 @@ def render(client: DataOpsClient):
     if not submitted:
         return
 
+    # Read slug from session state (field lives outside the form)
+    slug = st.session_state.get("slug_input", "").strip()
     # Validate slug
     valid, error = validate_slug(slug)
     if not valid:
