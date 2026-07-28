@@ -92,6 +92,7 @@ def render(client: DataOpsClient):
             region = st.selectbox(
                 "Region Group", REGION_OPTIONS,
                 index=REGION_OPTIONS.index(prefill["region"]) if prefill["region"] in REGION_OPTIONS else 0,
+                key="region_group",
             )
         with col_b:
             is_express = st.checkbox("Express Mode")

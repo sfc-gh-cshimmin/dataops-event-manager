@@ -72,6 +72,7 @@ def main():
         "Navigation",
         NAV_OPTIONS,
         index=default_index,
+        key="nav_radio",
     )
 
     # Event slug input (shared across views)
