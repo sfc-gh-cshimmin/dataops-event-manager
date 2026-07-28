@@ -63,11 +63,12 @@ def render(client: DataOpsClient):
     st.subheader("Event Slug")
     slug = st.text_input(
         "Event Slug*",
-        value=prefill["slug"],
+        value=prefill["slug"].strip(),
         key="slug_input",
         help="Max 31 chars, lowercase, starts with a letter, alphanumerics and hyphens only.",
     )
     if slug:
+        slug = slug.strip()
         slug_valid, slug_err = validate_slug(slug)
         if slug_valid:
             try:
