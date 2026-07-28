@@ -105,7 +105,6 @@ def render(client: DataOpsClient):
         configure_project = st.text_input(
             "DataOps Configure Project Path",
             value=prefill["configure_project"],
-            key="configure_project",
             help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
         )
         if prefill["configure_project"] and "default-event-configuration-" in prefill["configure_project"]:
