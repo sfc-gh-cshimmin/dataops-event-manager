@@ -35,12 +35,12 @@ def get_client() -> DataOpsClient:
     return DataOpsClient(token)
 
 
-NAV_OPTIONS = ["List Events", "View Event", "Create Event", "Patch Event", "Decommission Account"]
+NAV_OPTIONS = ["List Events", "Create Event", "Patch Event", "Decommission Account"]
 
 # Map ?page= param values to nav labels
 _PAGE_PARAM_MAP = {
     "create": "Create Event",
-    "view": "View Event",
+    "view": "List Events",
     "list": "List Events",
     "patch": "Patch Event",
     "decommission": "Decommission Account",
@@ -88,9 +88,6 @@ def main():
     # Route to views
     if nav == "List Events":
         from views.list_events import render
-        render(client)
-    elif nav == "View Event":
-        from views.view_event import render
         render(client)
     elif nav == "Create Event":
         from views.create_event import render
