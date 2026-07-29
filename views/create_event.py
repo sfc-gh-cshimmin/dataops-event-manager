@@ -100,6 +100,27 @@ def _read_prefill() -> dict:
 def render(client: DataOpsClient):
     st.header("➕ Create Event")
 
+    # Execute pending create action (must be before any early return)
+    if st.session_state.get("_create_pending"):
+        _payload = st.session_state.pop("_create_payload", {})
+        _slug = st.session_state.pop("_create_slug", "")
+        st.session_state.pop("_create_pending", None)
+        with st.spinner("Creating event..."):
+            try:
+                result = client.create_event(_slug, _payload)
+                st.success("Event created successfully!")
+                st.markdown(f"- **Slug:** `{_slug}`")
+                st.markdown(f"- **URL:** https://snowflake.dataops.live/event-deployments/{_slug}")
+                st.session_state["selected_event_slug"] = _slug
+                if isinstance(result, dict):
+                    st.json(result)
+            except DataOpsAPIError as e:
+                st.error(f"Failed to create event: {e}")
+                st.code(e.body)
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
+        return
+
     prefill = _read_prefill()
     has_prefill = any([prefill["name"], prefill["slug"], prefill["start_date"]])
 
@@ -239,6 +260,21 @@ def render(client: DataOpsClient):
         submitted = st.form_submit_button("Preview & Validate", use_container_width=True)
 
     if not submitted:
+        # Show the summary and confirm button if payload is pending
+        if st.session_state.get("_pending_payload"):
+            _p = st.session_state["_pending_payload"]
+            _s = st.session_state["_pending_slug"]
+            st.divider()
+            st.subheader("Creation Summary")
+            st.json({k: v for k, v in _p.items() if k != "instructions"})
+            st.warning("⚠️ This action creates a new live event. This cannot be undone easily.")
+            if st.button("🚀 Create Event", type="primary", key="create_btn"):
+                st.session_state["_create_pending"] = True
+                st.session_state["_create_payload"] = _p
+                st.session_state["_create_slug"] = _s
+                st.session_state.pop("_pending_payload", None)
+                st.session_state.pop("_pending_slug", None)
+                st.rerun()
         return
 
     # Read configure_project from session state (field is outside the form)
@@ -292,37 +328,7 @@ def render(client: DataOpsClient):
     payload["initial_pool_size"] = payload.get("pool_size", 0)
     payload["instructions"] = load_default_instructions()
 
-    # Show summary
-    st.divider()
-    st.subheader("Creation Summary")
-
-    display_payload = {k: v for k, v in payload.items() if k != "instructions"}
-    st.json(display_payload)
-
-    with st.expander("Instructions template (auto-injected)"):
-        preview = payload["instructions"]
-        st.code(preview[:500] + "..." if len(preview) > 500 else preview, language="html")
-
-    # Confirmation
-    st.warning("⚠️ This action creates a new live event. This cannot be undone easily.")
-
-    if "create_confirmed" not in st.session_state:
-        st.session_state["create_confirmed"] = False
-
-    if st.button("🚀 Create Event", type="primary"):
-        st.session_state["create_confirmed"] = True
-
-    if st.session_state.get("create_confirmed"):
-        st.session_state["create_confirmed"] = False
-        with st.spinner("Creating event..."):
-            try:
-                result = client.create_event(slug, payload)
-                st.success("Event created successfully!")
-                st.markdown(f"- **Slug:** `{slug}`")
-                st.markdown(f"- **URL:** https://snowflake.dataops.live/event-deployments/{slug}")
-                st.session_state["selected_event_slug"] = slug
-                if isinstance(result, dict):
-                    st.json(result)
-            except DataOpsAPIError as e:
-                st.error(f"Failed to create event: {e}")
-                st.code(e.body)
+    # Store payload for the confirm step (shown on next rerun via the early-return path above)
+    st.session_state["_pending_payload"] = payload
+    st.session_state["_pending_slug"] = slug
+    st.rerun()
