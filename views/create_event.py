@@ -128,6 +128,22 @@ def _read_prefill() -> dict:
 def render(client: DataOpsClient):
     st.header("➕ Create Event")
 
+    # Execute pending approve action
+    if st.session_state.get("_approve_pending"):
+        _approve_slug = st.session_state.pop("_approve_slug", "")
+        st.session_state.pop("_approve_pending", None)
+        try:
+            client.approve_event(_approve_slug)
+            if "_just_created" in st.session_state:
+                st.session_state["_just_created"]["approved"] = True
+        except DataOpsAPIError as _ae:
+            if "_just_created" in st.session_state:
+                st.session_state["_just_created"]["approve_error"] = str(_ae.body)
+        except Exception as _ae:
+            if "_just_created" in st.session_state:
+                st.session_state["_just_created"]["approve_error"] = str(_ae)
+        st.rerun()
+
     # Execute pending create action (must be before any early return)
     if st.session_state.get("_create_pending"):
         _payload = st.session_state.pop("_create_payload", {})
@@ -136,28 +152,52 @@ def render(client: DataOpsClient):
         with st.spinner("Creating event..."):
             try:
                 result = client.create_event(_slug, _payload)
-                event_url = f"https://snowflake.dataops.live/event-deployments/{_slug}"
-                st.success(f"✅ Event created successfully!")
-                _rc1, _rc2 = st.columns(2)
-                with _rc1:
-                    st.markdown(f"**Slug:** `{_slug}`")
-                    st.markdown(f"**URL:** [{event_url}]({event_url})")
-                with _rc2:
-                    if st.button("✅ Approve Event", type="primary", key="approve_btn"):
-                        try:
-                            client.approve_event(_slug)
-                            st.success(f"Event `{_slug}` approved!")
-                        except DataOpsAPIError as _ae:
-                            st.error(f"Approval failed: {_ae.body}")
+                st.session_state["_just_created"] = {
+                    "slug": _slug,
+                    "event_url": f"https://snowflake.dataops.live/event-deployments/{_slug}",
+                    "result": result,
+                }
                 st.session_state["selected_event_slug"] = _slug
-                if isinstance(result, dict):
-                    with st.expander("API response", expanded=False):
-                        st.json(result)
             except DataOpsAPIError as e:
                 st.error(f"Failed to create event: {e}")
                 st.code(e.body)
+                return
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
+                return
+        st.rerun()
+
+    # Show persistent success page after event creation
+    if st.session_state.get("_just_created"):
+        _jc = st.session_state["_just_created"]
+        _slug = _jc["slug"]
+        _event_url = _jc["event_url"]
+        st.success("✅ Event created successfully!")
+        _rc1, _rc2 = st.columns(2)
+        with _rc1:
+            st.markdown(f"**Slug:** `{_slug}`")
+            st.markdown(f"**URL:** [{_event_url}]({_event_url})")
+        with _rc2:
+            if _jc.get("approved"):
+                st.success(f"Event `{_slug}` approved!")
+            elif _jc.get("approve_error"):
+                st.error(f"Approval failed: {_jc['approve_error']}")
+                if st.button("Retry Approve", type="primary", key="retry_approve_btn"):
+                    _jc.pop("approve_error", None)
+                    st.session_state["_approve_pending"] = True
+                    st.session_state["_approve_slug"] = _slug
+                    st.rerun()
+            else:
+                if st.button("✅ Approve Event", type="primary", key="approve_btn"):
+                    st.session_state["_approve_pending"] = True
+                    st.session_state["_approve_slug"] = _slug
+                    st.rerun()
+        if isinstance(_jc.get("result"), dict):
+            with st.expander("API response", expanded=False):
+                st.json(_jc["result"])
+        if st.button("Create Another Event", key="create_another_btn"):
+            st.session_state.pop("_just_created", None)
+            st.rerun()
         return
 
     prefill = _read_prefill()
