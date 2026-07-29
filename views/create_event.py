@@ -56,7 +56,31 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
         return False, f"Error creating fork: {e}", ""
 
 
-EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
+DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
+
+_DELIVERY_FORMAT_MAP = {
+    "hands on lab": "HANDS_ON_LAB",
+    "hands-on-lab": "HANDS_ON_LAB",
+    "virtual hands on lab": "HANDS_ON_LAB",
+    "in person hands on lab": "HANDS_ON_LAB",
+    "hol": "HANDS_ON_LAB",
+    "workshop": "WORKSHOP",
+    "training": "TRAINING",
+    "hackathon": "HACKATHON",
+    "hack": "HACKATHON",
+}
+
+def _map_delivery_format(raw: str) -> str:
+    """Map a free-text EVENT_TYPE to a valid API delivery_format enum value."""
+    if not raw:
+        return "HANDS_ON_LAB"
+    lower = raw.lower().strip()
+    for key, val in _DELIVERY_FORMAT_MAP.items():
+        if key in lower:
+            return val
+    if lower in [v.lower() for v in DELIVERY_FORMAT_OPTIONS]:
+        return lower.upper()
+    return "OTHER"
 REGION_OPTIONS = ["aws_us_west_2", "aws_us_east_1", "aws_eu_west_1", "azure_eastus2", "gcp_us_central1"]
 
 
@@ -94,7 +118,7 @@ def _read_prefill() -> dict:
         "attendee_email":    qp.get("attendee_email", ""),
         "attendee_name":     qp.get("attendee_name", ""),
         "region":            qp.get("region", "").lower(),
-        "delivery_format":   qp.get("delivery_format", ""),
+        "delivery_format": _map_delivery_format(qp.get("delivery_format", "")),
         "configure_project": qp.get("configure_project", ""),
         "fork_parent":       qp.get("fork_parent", ""),
     }
@@ -222,7 +246,12 @@ def render(client: DataOpsClient):
         st.subheader("Event Details")
         name = st.text_input("Event Name", value=prefill["name"])
         location = st.text_input("Location", value="Virtual")
-        delivery_format = st.text_input("Delivery Format", value=prefill["delivery_format"])
+        delivery_format = st.selectbox(
+            "Delivery Format",
+            DELIVERY_FORMAT_OPTIONS,
+            index=DELIVERY_FORMAT_OPTIONS.index(prefill["delivery_format"])
+                  if prefill["delivery_format"] in DELIVERY_FORMAT_OPTIONS else 0,
+        )
 
         st.subheader("Dates")
         col1, col2, col3 = st.columns(3)
