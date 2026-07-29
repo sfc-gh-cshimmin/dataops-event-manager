@@ -80,12 +80,15 @@ def _parse_date_param(value: str | None) -> date | None:
 def _read_prefill() -> dict:
     """Read pre-fill values from URL query parameters."""
     qp = st.query_params
+    from datetime import timedelta as _td
+    _end = _parse_date_param(qp.get("end_date"))
+    _decomm = _parse_date_param(qp.get("decommission_date")) or (_end + _td(days=2) if _end else None)
     return {
         "slug":              qp.get("slug", ""),
         "name":              qp.get("name", ""),
         "start_date":        _parse_date_param(qp.get("start_date")),
-        "end_date":          _parse_date_param(qp.get("end_date")),
-        "decommission_date": _parse_date_param(qp.get("decommission_date")),
+        "end_date":          _end,
+        "decommission_date": _decomm,
         "build_date":        _parse_date_param(qp.get("build_date")),
         "pool_size":         int(qp["pool_size"]) if qp.get("pool_size", "").isdigit() else 0,
         "attendee_email":    qp.get("attendee_email", ""),
