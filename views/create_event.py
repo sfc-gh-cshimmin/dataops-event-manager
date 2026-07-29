@@ -56,6 +56,7 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
         return False, f"Error creating fork: {e}", ""
 
 
+EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
 _DELIVERY_FORMAT_MAP = {
