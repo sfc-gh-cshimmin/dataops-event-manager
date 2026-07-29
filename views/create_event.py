@@ -1,10 +1,59 @@
 """Create event form."""
 
 import streamlit as st
+import urllib.parse as _urlparse
+import requests as _requests
 from datetime import date
 from pathlib import Path
 from api_client import DataOpsClient, DataOpsAPIError
 from utils import validate_slug, parse_comma_list
+
+
+GITLAB_BASE = "https://app.dataops.live/api/v4"
+
+
+def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> tuple[bool, str, str]:
+    """Fork fork_parent_path into configure_project's namespace with configure_project's slug.
+    Returns (success, message, fork_url).
+    """
+    headers = {"PRIVATE-TOKEN": token}
+
+    # Look up parent project ID
+    try:
+        resp = _requests.get(
+            f"{GITLAB_BASE}/projects/{_urlparse.quote(fork_parent_path, safe='')}",
+            headers=headers, timeout=10
+        )
+        if resp.status_code != 200:
+            return False, f"Could not find parent project (HTTP {resp.status_code}).", ""
+        parent_id = resp.json()["id"]
+    except Exception as e:
+        return False, f"Error looking up parent project: {e}", ""
+
+    # Derive namespace and path from configure_project
+    parts = configure_project.rstrip("/").split("/")
+    fork_path = parts[-1]
+    fork_namespace = "/".join(parts[:-1])
+    fork_url = f"https://app.dataops.live/{configure_project}"
+
+    # Fork it
+    try:
+        fork_resp = _requests.post(
+            f"{GITLAB_BASE}/projects/{parent_id}/fork",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"namespace_path": fork_namespace, "path": fork_path, "name": fork_path},
+            timeout=30,
+        )
+        if fork_resp.status_code == 201:
+            return True, "Fork created successfully.", fork_url
+        elif fork_resp.status_code == 409:
+            return True, "Fork already exists.", fork_url
+        else:
+            body = fork_resp.json()
+            msg = body.get("message", str(body))
+            return False, f"Fork failed (HTTP {fork_resp.status_code}): {msg}", ""
+    except Exception as e:
+        return False, f"Error creating fork: {e}", ""
 
 
 EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
@@ -44,6 +93,7 @@ def _read_prefill() -> dict:
         "region":            qp.get("region", "").lower(),
         "delivery_format":   qp.get("delivery_format", ""),
         "configure_project": qp.get("configure_project", ""),
+        "fork_parent":       qp.get("fork_parent", ""),
     }
 
 
@@ -58,6 +108,42 @@ def render(client: DataOpsClient):
             "ℹ️ Form pre-filled from HOL Analytics Dashboard. Review all fields before submitting.",
             icon="ℹ️",
         )
+
+    # Fork Repository section — shown for custom/fork-type events
+    if prefill["fork_parent"] and prefill["configure_project"]:
+        st.subheader("Fork Repository")
+        st.caption(
+            f"**Parent:** `{prefill['fork_parent']}`  \n"
+            f"**Fork path:** `{prefill['configure_project']}`"
+        )
+        _fork_key = f"fork_state_{prefill['configure_project']}"
+        if _fork_key not in st.session_state:
+            st.session_state[_fork_key] = None
+
+        _fork_state = st.session_state[_fork_key]
+        _fork_url = f"https://app.dataops.live/{prefill['configure_project']}"
+
+        if _fork_state == "success":
+            st.success(f"Fork created: [{prefill['configure_project']}]({_fork_url})")
+        elif _fork_state == "exists":
+            st.info(f"Fork already exists: [{prefill['configure_project']}]({_fork_url}) — proceed with form below.")
+        elif isinstance(_fork_state, str):
+            st.error(_fork_state)
+
+        if _fork_state not in ("success", "exists"):
+            if st.button("Create Fork", type="primary", key="create_fork_btn"):
+                _token = st.secrets.get("DATAOPS_API_TOKEN", "")
+                with st.spinner("Creating fork in GitLab..."):
+                    _ok, _msg, _ = _gitlab_fork(_token, prefill["fork_parent"], prefill["configure_project"])
+                if _ok and "already exists" in _msg:
+                    st.session_state[_fork_key] = "exists"
+                elif _ok:
+                    st.session_state[_fork_key] = "success"
+                else:
+                    st.session_state[_fork_key] = _msg
+                st.rerun()
+
+        st.divider()
 
     # Slug field lives outside the form so availability is checked on every keystroke
     st.subheader("Event Slug")
