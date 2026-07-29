@@ -110,40 +110,9 @@ def render(client: DataOpsClient):
         )
 
     # Fork Repository section — shown for custom/fork-type events
-    if prefill["fork_parent"] and prefill["configure_project"]:
-        st.subheader("Fork Repository")
-        st.caption(
-            f"**Parent:** `{prefill['fork_parent']}`  \n"
-            f"**Fork path:** `{prefill['configure_project']}`"
-        )
-        _fork_key = f"fork_state_{prefill['configure_project']}"
-        if _fork_key not in st.session_state:
-            st.session_state[_fork_key] = None
-
-        _fork_state = st.session_state[_fork_key]
-        _fork_url = f"https://app.dataops.live/{prefill['configure_project']}"
-
-        if _fork_state == "success":
-            st.success(f"Fork created: [{prefill['configure_project']}]({_fork_url})")
-        elif _fork_state == "exists":
-            st.info(f"Fork already exists: [{prefill['configure_project']}]({_fork_url}) — proceed with form below.")
-        elif isinstance(_fork_state, str):
-            st.error(_fork_state)
-
-        if _fork_state not in ("success", "exists"):
-            if st.button("Create Fork", type="primary", key="create_fork_btn"):
-                _token = st.secrets.get("DATAOPS_API_TOKEN", "")
-                with st.spinner("Creating fork in GitLab..."):
-                    _ok, _msg, _ = _gitlab_fork(_token, prefill["fork_parent"], prefill["configure_project"])
-                if _ok and "already exists" in _msg:
-                    st.session_state[_fork_key] = "exists"
-                elif _ok:
-                    st.session_state[_fork_key] = "success"
-                else:
-                    st.session_state[_fork_key] = _msg
-                st.rerun()
-
-        st.divider()
+    # (Only shown when fork_parent is explicitly passed via URL)
+    if False:  # Replaced by inline fork button near configure_project field below
+        pass
 
     # Slug field lives outside the form so availability is checked on every keystroke
     st.subheader("Event Slug")
@@ -170,13 +139,62 @@ def render(client: DataOpsClient):
         else:
             st.caption(f"🔴 {slug_err}")
 
+    # Configure Project Path — outside form so fork button can react immediately
+    st.subheader("Configure Project")
+    configure_project_val = st.text_input(
+        "DataOps Configure Project Path",
+        value=prefill["configure_project"],
+        key="configure_project_input",
+        help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
+    )
+
+    # Detect fork-type path and show fork button
+    _fork_parent = prefill["fork_parent"]
+    if not _fork_parent and configure_project_val:
+        import re as _re
+        _m = _re.match(r'^(snowflake/hands-on-lab-drafts/[a-z0-9-]+)-[a-z0-9-]+$', configure_project_val)
+        if _m:
+            _fork_parent = _m.group(1)
+
+    if _fork_parent and configure_project_val:
+        _fork_key = f"fork_state_{configure_project_val}"
+        if _fork_key not in st.session_state:
+            st.session_state[_fork_key] = None
+        _fork_state = st.session_state[_fork_key]
+        _fork_url = f"https://app.dataops.live/{configure_project_val}"
+
+        if _fork_state == "success":
+            st.success(f"Fork created: [{configure_project_val}]({_fork_url})")
+        elif _fork_state == "exists":
+            st.info(f"Fork already exists: [{configure_project_val}]({_fork_url}) — proceed with form below.")
+        elif isinstance(_fork_state, str) and _fork_state:
+            st.error(_fork_state)
+
+        if _fork_state not in ("success", "exists"):
+            _fc1, _fc2 = st.columns([1, 3])
+            with _fc1:
+                if st.button("Create Fork", type="primary", key="create_fork_btn", use_container_width=True):
+                    _token = st.secrets.get("DATAOPS_API_TOKEN", "")
+                    with st.spinner("Creating fork in GitLab..."):
+                        _ok, _msg, _ = _gitlab_fork(_token, _fork_parent, configure_project_val)
+                    if _ok and "already exists" in _msg:
+                        st.session_state[_fork_key] = "exists"
+                    elif _ok:
+                        st.session_state[_fork_key] = "success"
+                    else:
+                        st.session_state[_fork_key] = _msg
+                    st.rerun()
+            with _fc2:
+                st.caption(f"Forks `{_fork_parent}` → `{configure_project_val}`")
+    elif configure_project_val:
+        st.caption("Standard HOL content — no fork needed.")
+
     with st.form("create_event_form"):
         st.subheader("Required Fields")
         decommission_date = st.date_input(
             "Decommission Date*",
             value=prefill["decommission_date"],
         )
-
         st.subheader("Event Details")
         name = st.text_input("Event Name", value=prefill["name"])
         location = st.text_input("Location", value="Virtual")
@@ -208,16 +226,6 @@ def render(client: DataOpsClient):
             )
             instructor_reconfigure = st.checkbox("Instructor Reconfigure")
 
-        configure_project = st.text_input(
-            "DataOps Configure Project Path",
-            value=prefill["configure_project"],
-            help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
-        )
-        if prefill["configure_project"] and "default-event-configuration-" in prefill["configure_project"]:
-            st.caption(
-                "Path pre-generated for a custom event. Fork the parent repo in GitLab "
-                "before submitting."
-            )
         allowed_domains = st.text_input("Allowed Email Domains", help="Comma-separated, e.g. snowflake.com, acme.org")
 
         # Attendee pre-fill (shown read-only so user knows what will be submitted)
@@ -233,8 +241,8 @@ def render(client: DataOpsClient):
     if not submitted:
         return
 
-    # Read slug from session state (field lives outside the form)
-    slug = st.session_state.get("slug_input", "").strip()
+    # Read configure_project from session state (field is outside the form)
+    configure_project = st.session_state.get("configure_project_input", "").strip()
     # Validate slug
     valid, error = validate_slug(slug)
     if not valid:
