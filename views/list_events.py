@@ -106,7 +106,7 @@ def _render_event_detail(client: DataOpsClient, slug: str):
 
 
 def render(client: DataOpsClient):
-    st.header("📋 List Events")
+    st.header("📋 Manage Events")
 
     # Execute pending approve (must be before any early return)
     if st.session_state.get("_list_approve_pending"):
