@@ -59,6 +59,16 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
 EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
+# (label, full GitLab path) — ordered by fork count descending
+FORK_PARENT_OPTIONS = [
+    ("Default Event Configuration",             "snowflake/hands-on-lab-drafts/default-event-configuration"),
+    ("Zero to Snowflake",                        "snowflake/hands-on-labs/zero-to-snowflake-v-2"),
+    ("Intro to Cortex Code (CLI + SPCS)",        "snowflake/hands-on-labs/intro-to-cortex-code-cli-with-spcs-native-app"),
+    ("Intro to Cortex Code",                     "snowflake/hands-on-labs/intro-to-cortex-code"),
+    ("AI Assistant for FSI (AI/SQL + SI)",       "snowflake/hands-on-labs/build-an-ai-assistant-for-fsi-using-aisql-and-snowflake-intelligence"),
+    ("Cortex AI SQL HOL Pack",                   "snowflake/hands-on-labs/snowflake-cortex-aisql-hol-pack"),
+]
+
 _DELIVERY_FORMAT_MAP = {
     "hands on lab": "HANDS_ON_LAB",
     "hands-on-lab": "HANDS_ON_LAB",
@@ -248,13 +258,30 @@ def render(client: DataOpsClient):
         help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
     )
 
-    # Detect fork-type path and show fork button
-    _fork_parent = prefill["fork_parent"]
-    if not _fork_parent and configure_project_val:
-        import re as _re
-        _m = _re.match(r'^(snowflake/hands-on-lab-drafts/[a-z0-9-]+)-[a-z0-9-]+$', configure_project_val)
-        if _m:
-            _fork_parent = _m.group(1)
+    # Fork parent dropdown
+    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in FORK_PARENT_OPTIONS]
+    _fp_paths  = [None] + [path for _, path in FORK_PARENT_OPTIONS]
+    _prefill_fp = prefill["fork_parent"]
+    _default_fp_idx = 0
+    if _prefill_fp:
+        for _i, _p in enumerate(_fp_paths):
+            if _p == _prefill_fp:
+                _default_fp_idx = _i
+                break
+        else:
+            # Unknown path from URL — add as custom entry
+            _fp_labels.append(f"Custom: {_prefill_fp}")
+            _fp_paths.append(_prefill_fp)
+            _default_fp_idx = len(_fp_paths) - 1
+
+    _selected_fp_label = st.selectbox(
+        "Fork Parent Repo",
+        _fp_labels,
+        index=_default_fp_idx,
+        key="fork_parent_select",
+        help="Repo to fork from. Use 'Default Event Configuration' for most custom deployments.",
+    )
+    _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
 
     if _fork_parent and configure_project_val:
         _fork_key = f"fork_state_{configure_project_val}"
