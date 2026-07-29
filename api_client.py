@@ -91,6 +91,9 @@ class DataOpsClient:
     def patch_event(self, slug: str, payload: dict) -> dict:
         return self._patch(f"/event_management/{slug}", json_data=payload)
 
+    def approve_event(self, slug: str) -> dict:
+        return self._post(f"/event_management/{slug}/approve")
+
     def decommission_account(self, event_slug: str, account_id: int, remain_allocated: bool = True) -> dict:
         params = {"remain_allocated": str(remain_allocated).lower()}
         return self._post(

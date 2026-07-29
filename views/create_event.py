@@ -136,12 +136,23 @@ def render(client: DataOpsClient):
         with st.spinner("Creating event..."):
             try:
                 result = client.create_event(_slug, _payload)
-                st.success("Event created successfully!")
-                st.markdown(f"- **Slug:** `{_slug}`")
-                st.markdown(f"- **URL:** https://snowflake.dataops.live/event-deployments/{_slug}")
+                event_url = f"https://snowflake.dataops.live/event-deployments/{_slug}"
+                st.success(f"✅ Event created successfully!")
+                _rc1, _rc2 = st.columns(2)
+                with _rc1:
+                    st.markdown(f"**Slug:** `{_slug}`")
+                    st.markdown(f"**URL:** [{event_url}]({event_url})")
+                with _rc2:
+                    if st.button("✅ Approve Event", type="primary", key="approve_btn"):
+                        try:
+                            client.approve_event(_slug)
+                            st.success(f"Event `{_slug}` approved!")
+                        except DataOpsAPIError as _ae:
+                            st.error(f"Approval failed: {_ae.body}")
                 st.session_state["selected_event_slug"] = _slug
                 if isinstance(result, dict):
-                    st.json(result)
+                    with st.expander("API response", expanded=False):
+                        st.json(result)
             except DataOpsAPIError as e:
                 st.error(f"Failed to create event: {e}")
                 st.code(e.body)
@@ -298,8 +309,24 @@ def render(client: DataOpsClient):
             _p = st.session_state["_pending_payload"]
             _s = st.session_state["_pending_slug"]
             st.divider()
-            st.subheader("Creation Summary")
-            st.json({k: v for k, v in _p.items() if k != "instructions"})
+            st.subheader("Event Preview")
+            _pc1, _pc2 = st.columns(2)
+            with _pc1:
+                if _p.get("name"): st.markdown(f"**Name:** {_p['name']}")
+                if _p.get("slug"): st.markdown(f"**Slug:** `{_p['slug']}`")
+                if _p.get("snowflake_account_region_group"): st.markdown(f"**Region:** `{_p['snowflake_account_region_group']}`")
+                if _p.get("snowflake_account_edition"): st.markdown(f"**Edition:** {_p['snowflake_account_edition']}")
+                if _p.get("delivery_format"): st.markdown(f"**Format:** {_p['delivery_format']}")
+                if _p.get("pool_size"): st.markdown(f"**Pool Size:** {_p['pool_size']}")
+            with _pc2:
+                if _p.get("build_date"): st.markdown(f"**Build Date:** {_p['build_date'][:10]}")
+                if _p.get("start_date"): st.markdown(f"**Start:** {_p['start_date'][:10]}")
+                if _p.get("end_date"): st.markdown(f"**End:** {_p['end_date'][:10]}")
+                if _p.get("decommission_date"): st.markdown(f"**Decomm:** {_p['decommission_date'][:10]}")
+            if _p.get("dataops_configure_project_path"):
+                st.markdown(f"**Configure Project:** `{_p['dataops_configure_project_path']}`")
+            with st.expander("Raw payload", expanded=False):
+                st.json({k: v for k, v in _p.items() if k != "instructions"})
             st.warning("⚠️ This action creates a new live event. This cannot be undone easily.")
             if st.button("🚀 Create Event", type="primary", key="create_btn"):
                 st.session_state["_create_pending"] = True
