@@ -128,7 +128,7 @@ def _read_prefill() -> dict:
         "pool_size":         int(qp["pool_size"]) if qp.get("pool_size", "").isdigit() else 0,
         "attendee_email":    qp.get("attendee_email", ""),
         "attendee_name":     qp.get("attendee_name", ""),
-        "region":            qp.get("region", "").lower(),
+        "region":            qp.get("region", "").lower().replace("-", "_"),
         "delivery_format": _map_delivery_format(qp.get("delivery_format", "")),
         "configure_project": qp.get("configure_project", ""),
         "fork_parent":       qp.get("fork_parent", ""),
