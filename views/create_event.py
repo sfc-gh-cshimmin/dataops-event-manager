@@ -259,9 +259,24 @@ def render(client: DataOpsClient):
     st.subheader("Configure Project")
 
     # Fork parent dropdown — pick the source repo first, then name the destination
-    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in FORK_PARENT_OPTIONS]
-    _fp_paths  = [None] + [path for _, path in FORK_PARENT_OPTIONS]
     _prefill_fp = prefill["fork_parent"]
+
+    # Group toggle — default to whichever group the prefill fork parent belongs to
+    _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
+    if "fork_group_toggle" not in st.session_state:
+        st.session_state["fork_group_toggle"] = _group_default
+    _selected_group = st.radio(
+        "Repository Group",
+        ["Drafts", "Published HOLs"],
+        horizontal=True,
+        key="fork_group_toggle",
+        help="Drafts = hands-on-lab-drafts (custom deployments). Published HOLs = hands-on-labs (standard content).",
+    )
+    _group_slug = "hands-on-lab-drafts" if _selected_group == "Drafts" else "hands-on-labs"
+    _filtered_opts = [(lbl, path) for lbl, path in FORK_PARENT_OPTIONS if f"/{_group_slug}/" in path]
+
+    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in _filtered_opts]
+    _fp_paths  = [None] + [path for _, path in _filtered_opts]
     _default_fp_idx = 0
     if _prefill_fp:
         for _i, _p in enumerate(_fp_paths):
