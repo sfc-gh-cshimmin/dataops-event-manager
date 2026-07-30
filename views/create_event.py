@@ -319,14 +319,31 @@ def render(client: DataOpsClient):
         _fork_state = st.session_state[_fork_key]
         _fork_url = f"https://app.dataops.live/{configure_project_val}"
 
+        # Check whether this GitLab project already exists (cached per path)
+        _cp_check_key = f"_cp_exists_{configure_project_val}"
+        if _cp_check_key not in st.session_state:
+            try:
+                _token = st.secrets.get("DATAOPS_API_TOKEN", "")
+                _cr = _requests.get(
+                    f"{GITLAB_BASE}/projects/{_urlparse.quote(configure_project_val, safe='')}",
+                    headers={"PRIVATE-TOKEN": _token},
+                    verify=False, timeout=5,
+                )
+                st.session_state[_cp_check_key] = _cr.status_code
+            except Exception:
+                st.session_state[_cp_check_key] = None
+        _cp_status = st.session_state.get(_cp_check_key)
+
         if _fork_state == "success":
             st.success(f"Fork created: [{configure_project_val}]({_fork_url})")
-        elif _fork_state == "exists":
-            st.info(f"Fork already exists: [{configure_project_val}]({_fork_url}) — proceed with form below.")
+        elif _fork_state == "exists" or _cp_status == 200:
+            st.info(f"Project already exists: [{configure_project_val}]({_fork_url}) — proceed with event form below.")
+        elif _cp_status == 404:
+            st.success(f"✅ Fork path `{configure_project_val}` is available.")
         elif isinstance(_fork_state, str) and _fork_state:
             st.error(_fork_state)
 
-        if _fork_state not in ("success", "exists"):
+        if _fork_state not in ("success", "exists") and _cp_status != 200:
             _fc1, _fc2 = st.columns([1, 3])
             with _fc1:
                 if st.button("Create Fork", type="primary", key="create_fork_btn", use_container_width=True):
