@@ -283,11 +283,22 @@ def render(client: DataOpsClient):
     )
     _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
 
+    # Auto-derive configure project path when fork parent selection changes:
+    # path = <fork_parent>-<slug>
+    _slug_val = (st.session_state.get("slug_input") or prefill["slug"] or "").strip()
+    if _fork_parent:
+        _auto_cp = f"{_fork_parent}-{_slug_val}" if _slug_val else _fork_parent
+    else:
+        _auto_cp = prefill["configure_project"]
+
+    if st.session_state.get("_cp_last_fork_parent") != _fork_parent:
+        st.session_state["configure_project_input"] = _auto_cp
+        st.session_state["_cp_last_fork_parent"] = _fork_parent
+
     configure_project_val = st.text_input(
         "DataOps Configure Project Path",
-        value=prefill["configure_project"],
         key="configure_project_input",
-        help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
+        help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2 — auto-filled from fork parent + slug, editable.",
     )
 
     if _fork_parent and configure_project_val:
