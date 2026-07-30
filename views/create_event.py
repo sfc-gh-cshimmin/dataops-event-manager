@@ -164,6 +164,7 @@ def render(client: DataOpsClient):
                 result = client.create_event(_slug, _payload)
                 st.session_state["_just_created"] = {
                     "slug": _slug,
+                    "name": _payload.get("name", _slug),
                     "event_url": f"https://snowflake.dataops.live/event-deployments/{_slug}",
                     "result": result,
                 }
@@ -181,8 +182,13 @@ def render(client: DataOpsClient):
     if st.session_state.get("_just_created"):
         _jc = st.session_state["_just_created"]
         _slug = _jc["slug"]
+        _event_name = _jc.get("name", _slug)
         _event_url = _jc["event_url"]
         st.success("✅ Event created successfully!")
+        st.info(
+            f"**Next step:** Copy the event URL below and paste it into the "
+            f"**HOL URL** field for **{_event_name}** in the HOL Request Tracker."
+        )
         _rc1, _rc2 = st.columns(2)
         with _rc1:
             st.markdown(f"**Slug:** `{_slug}`")
