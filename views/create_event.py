@@ -255,16 +255,10 @@ def render(client: DataOpsClient):
         else:
             st.caption(f"🔴 {slug_err}")
 
-    # Configure Project Path — outside form so fork button can react immediately
+    # Configure Project section — all outside form so fork button can react immediately
     st.subheader("Configure Project")
-    configure_project_val = st.text_input(
-        "DataOps Configure Project Path",
-        value=prefill["configure_project"],
-        key="configure_project_input",
-        help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
-    )
 
-    # Fork parent dropdown
+    # Fork parent dropdown — pick the source repo first, then name the destination
     _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in FORK_PARENT_OPTIONS]
     _fp_paths  = [None] + [path for _, path in FORK_PARENT_OPTIONS]
     _prefill_fp = prefill["fork_parent"]
@@ -284,10 +278,17 @@ def render(client: DataOpsClient):
         "Fork Parent Repo",
         _fp_labels,
         index=_default_fp_idx,
-        key="fork_parent_select",
+        key="cp_fork_parent",
         help="Repo to fork from. Use 'Default Event Configuration' for most custom deployments.",
     )
     _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
+
+    configure_project_val = st.text_input(
+        "DataOps Configure Project Path",
+        value=prefill["configure_project"],
+        key="configure_project_input",
+        help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2",
+    )
 
     if _fork_parent and configure_project_val:
         _fork_key = f"fork_state_{configure_project_val}"
