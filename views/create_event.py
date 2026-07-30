@@ -258,57 +258,53 @@ def render(client: DataOpsClient):
     # Configure Project section — all outside form so fork button can react immediately
     st.subheader("Configure Project")
 
-    # Fork parent dropdown — pick the source repo first, then name the destination
+    # Fork parent dropdown — fixed list, no custom entries
     _prefill_fp = prefill["fork_parent"]
-
-    # Group toggle — default to whichever group the prefill fork parent belongs to
-    _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
-    if "fork_group_toggle" not in st.session_state:
-        st.session_state["fork_group_toggle"] = _group_default
-    _selected_group = st.radio(
-        "Repository Group",
-        ["Drafts", "Published HOLs"],
-        horizontal=True,
-        key="fork_group_toggle",
-        help="Drafts = hands-on-lab-drafts (custom deployments). Published HOLs = hands-on-labs (standard content).",
-    )
-    _group_slug = "hands-on-lab-drafts" if _selected_group == "Drafts" else "hands-on-labs"
-    _filtered_opts = [(lbl, path) for lbl, path in FORK_PARENT_OPTIONS if f"/{_group_slug}/" in path]
-
-    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in _filtered_opts]
-    _fp_paths  = [None] + [path for _, path in _filtered_opts]
+    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in FORK_PARENT_OPTIONS]
+    _fp_paths  = [None] + [path for _, path in FORK_PARENT_OPTIONS]
     _default_fp_idx = 0
     if _prefill_fp:
         for _i, _p in enumerate(_fp_paths):
             if _p == _prefill_fp:
                 _default_fp_idx = _i
                 break
-        else:
-            # Unknown path from URL — add as custom entry
-            _fp_labels.append(f"Custom: {_prefill_fp}")
-            _fp_paths.append(_prefill_fp)
-            _default_fp_idx = len(_fp_paths) - 1
 
     _selected_fp_label = st.selectbox(
         "Fork Parent Repo",
         _fp_labels,
         index=_default_fp_idx,
         key="cp_fork_parent",
-        help="Repo to fork from. Use 'Default Event Configuration' for most custom deployments.",
+        help="Repo to fork from.",
     )
     _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
 
-    # Auto-derive configure project path when fork parent selection changes:
-    # path = <fork_parent>-<slug>
+    # Destination group toggle — controls which namespace the fork lands in
+    _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
+    if "fork_group_toggle" not in st.session_state:
+        st.session_state["fork_group_toggle"] = _group_default
+    _selected_group = st.radio(
+        "Destination Group",
+        ["Drafts", "Published HOLs"],
+        horizontal=True,
+        key="fork_group_toggle",
+        help="Drafts = hands-on-lab-drafts  |  Published HOLs = hands-on-labs",
+    )
+    _dest_namespace = "hands-on-lab-drafts" if _selected_group == "Drafts" else "hands-on-labs"
+
+    # Auto-derive configure project path from fork parent + destination group + slug
     _slug_val = (st.session_state.get("slug_input") or prefill["slug"] or "").strip()
-    if _fork_parent:
-        _auto_cp = f"{_fork_parent}-{_slug_val}" if _slug_val else _fork_parent
+    _fork_parent_name = _fork_parent.split("/")[-1] if _fork_parent else ""
+    if _fork_parent and _slug_val:
+        _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}-{_slug_val}"
+    elif _fork_parent:
+        _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}"
     else:
         _auto_cp = prefill["configure_project"]
 
-    if st.session_state.get("_cp_last_fork_parent") != _fork_parent:
+    _cp_state_key = (_fork_parent, _selected_group)
+    if st.session_state.get("_cp_last_fork_parent") != _cp_state_key:
         st.session_state["configure_project_input"] = _auto_cp
-        st.session_state["_cp_last_fork_parent"] = _fork_parent
+        st.session_state["_cp_last_fork_parent"] = _cp_state_key
 
     configure_project_val = st.text_input(
         "DataOps Configure Project Path",
