@@ -319,9 +319,9 @@ def render(client: DataOpsClient):
         _fork_state = st.session_state[_fork_key]
         _fork_url = f"https://app.dataops.live/{configure_project_val}"
 
-        # Check whether this GitLab project already exists (cached per path)
-        _cp_check_key = f"_cp_exists_{configure_project_val}"
-        if _cp_check_key not in st.session_state:
+        # Check whether this GitLab project already exists (live check, no cache)
+        _cp_status = None
+        if configure_project_val:
             try:
                 _token = st.secrets.get("DATAOPS_API_TOKEN", "")
                 _cr = _requests.get(
@@ -329,10 +329,9 @@ def render(client: DataOpsClient):
                     headers={"PRIVATE-TOKEN": _token},
                     verify=False, timeout=5,
                 )
-                st.session_state[_cp_check_key] = _cr.status_code
+                _cp_status = _cr.status_code
             except Exception:
-                st.session_state[_cp_check_key] = None
-        _cp_status = st.session_state.get(_cp_check_key)
+                pass
 
         if _fork_state == "success":
             st.success(f"Fork created: [{configure_project_val}]({_fork_url})")
