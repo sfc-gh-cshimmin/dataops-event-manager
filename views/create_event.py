@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from api_client import DataOpsClient, DataOpsAPIError
 from utils import validate_slug, parse_comma_list
+from snowflake_helpers import get_token, load_fork_parents, get_query_params
 
 
 GITLAB_BASE = "https://app.dataops.live/api/v4"
@@ -59,16 +60,6 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
 EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
-# (label, full GitLab path) — ordered by fork count descending
-FORK_PARENT_OPTIONS = [
-    ("Default Event Configuration",             "snowflake/hands-on-lab-drafts/default-event-configuration"),
-    ("Zero to Snowflake",                        "snowflake/hands-on-labs/zero-to-snowflake-v-2"),
-    ("Intro to Cortex Code (CLI + SPCS)",        "snowflake/hands-on-labs/intro-to-cortex-code-cli-with-spcs-native-app"),
-    ("Intro to Cortex Code",                     "snowflake/hands-on-labs/intro-to-cortex-code"),
-    ("AI Assistant for FSI (AI/SQL + SI)",       "snowflake/hands-on-labs/build-an-ai-assistant-for-fsi-using-aisql-and-snowflake-intelligence"),
-    ("Cortex AI SQL HOL Pack",                   "snowflake/hands-on-labs/snowflake-cortex-aisql-hol-pack"),
-]
-
 _DELIVERY_FORMAT_MAP = {
     "hands on lab": "HANDS_ON_LAB",
     "hands-on-lab": "HANDS_ON_LAB",
@@ -113,8 +104,37 @@ def _parse_date_param(value: str | None) -> date | None:
 
 
 def _read_prefill() -> dict:
-    """Read pre-fill values from URL query parameters."""
-    qp = st.query_params
+    """Read pre-fill values from pasted JSON (session state) or URL query parameters."""
+    # Check for pasted JSON first
+    raw_json = st.session_state.get("_pasted_event_json", "")
+    if raw_json:
+        try:
+            import json
+            data = json.loads(raw_json)
+            if isinstance(data, dict):
+                from datetime import timedelta as _td
+                _end = _parse_date_param(data.get("end_date"))
+                _decomm = _parse_date_param(data.get("decommission_date")) or (_end + _td(days=2) if _end else None)
+                return {
+                    "slug":              data.get("slug", ""),
+                    "name":              data.get("name", ""),
+                    "start_date":        _parse_date_param(data.get("start_date")),
+                    "end_date":          _end,
+                    "decommission_date": _decomm,
+                    "build_date":        _parse_date_param(data.get("build_date")),
+                    "pool_size":         int(data["pool_size"]) if str(data.get("pool_size", "")).isdigit() else 0,
+                    "attendee_email":    data.get("attendee_email", ""),
+                    "attendee_name":     data.get("attendee_name", ""),
+                    "region":            data.get("region", "").lower().replace("-", "_"),
+                    "delivery_format":   _map_delivery_format(data.get("delivery_format", "")),
+                    "configure_project": data.get("configure_project", ""),
+                    "fork_parent":       data.get("fork_parent", ""),
+                }
+        except Exception:
+            pass
+
+    # Fallback: read from URL query params
+    qp = get_query_params()
     from datetime import timedelta as _td
     _end = _parse_date_param(qp.get("end_date"))
     _decomm = _parse_date_param(qp.get("decommission_date")) or (_end + _td(days=2) if _end else None)
@@ -132,6 +152,7 @@ def _read_prefill() -> dict:
         "delivery_format": _map_delivery_format(qp.get("delivery_format", "")),
         "configure_project": qp.get("configure_project", ""),
         "fork_parent":       qp.get("fork_parent", ""),
+        "salesforce_id":     qp.get("salesforce_id", ""),
     }
 
 
@@ -216,6 +237,20 @@ def render(client: DataOpsClient):
             st.rerun()
         return
 
+    # JSON fallback — hidden by default, shown via toggle
+    if st.toggle("Use JSON fallback", key="show_json_fallback", value=bool(st.session_state.get("_pasted_event_json"))):
+        _paste_val = st.text_area(
+            "Paste JSON from HOL Tracker",
+            value=st.session_state.get("_pasted_event_json", ""),
+            height=120,
+            key="_paste_input",
+            placeholder='{"name": "...", "slug": "...", "start_date": "..."}',
+            help="Copy the JSON from the HOL Request Tracker and paste here to pre-fill the form.",
+        )
+        if st.button("Load", key="load_json_btn"):
+            st.session_state["_pasted_event_json"] = _paste_val
+            st.rerun()
+
     prefill = _read_prefill()
     has_prefill = any([prefill["name"], prefill["slug"], prefill["start_date"]])
 
@@ -258,25 +293,87 @@ def render(client: DataOpsClient):
     # Configure Project section — all outside form so fork button can react immediately
     st.subheader("Configure Project")
 
-    # Fork parent dropdown — fixed list, no custom entries
+    # Fork parent — fixed list OR repo search
     _prefill_fp = prefill["fork_parent"]
-    _fp_labels = ["None (standard deployment)"] + [lbl for lbl, _ in FORK_PARENT_OPTIONS]
-    _fp_paths  = [None] + [path for _, path in FORK_PARENT_OPTIONS]
-    _default_fp_idx = 0
-    if _prefill_fp:
-        for _i, _p in enumerate(_fp_paths):
-            if _p == _prefill_fp:
-                _default_fp_idx = _i
-                break
 
-    _selected_fp_label = st.selectbox(
-        "Fork Parent Repo",
-        _fp_labels,
-        index=_default_fp_idx,
-        key="cp_fork_parent",
-        help="Repo to fork from.",
+    _fp_mode = st.radio(
+        "Fork Parent",
+        ["Common repos", "Search all repos"],
+        horizontal=True,
+        key="fp_mode_toggle",
+        help="Common repos = curated list. Search = query hands-on-labs and hands-on-lab-drafts groups.",
     )
-    _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
+
+    if _fp_mode == "Common repos":
+        # Load fork parents from Snowflake table (SiS) or hardcoded fallback (local dev)
+        _fork_parent_data = load_fork_parents()
+        _fp_labels = ["None (standard deployment)"] + [fp["label"] for fp in _fork_parent_data]
+        _fp_paths  = [None] + [fp["path"] for fp in _fork_parent_data]
+        _default_fp_idx = 0
+        if _prefill_fp:
+            for _i, _p in enumerate(_fp_paths):
+                if _p == _prefill_fp:
+                    _default_fp_idx = _i
+                    break
+
+        _selected_fp_label = st.selectbox(
+            "Fork Parent Repo",
+            _fp_labels,
+            index=_default_fp_idx,
+            key="cp_fork_parent",
+            help="Repo to fork from.",
+        )
+        _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
+
+    else:  # Search all repos
+        _search_col, _btn_col = st.columns([4, 1])
+        with _search_col:
+            _repo_search = st.text_input(
+                "Search repos",
+                key="repo_search_input",
+                placeholder="e.g. cortex, zero-to-snowflake, data-engineering",
+            )
+        with _btn_col:
+            _do_search = st.button("Search", key="repo_search_btn", use_container_width=True)
+
+        if _do_search and _repo_search.strip():
+            _token = get_token()
+            _headers = {"PRIVATE-TOKEN": _token}
+            _results = []
+            for _gid in ["snowflake%2Fhands-on-labs", "snowflake%2Fhands-on-lab-drafts"]:
+                _page = 1
+                while True:
+                    try:
+                        _resp = _requests.get(
+                            f"{GITLAB_BASE}/groups/{_gid}/projects",
+                            headers=_headers,
+                            params={"search": _repo_search.strip(), "per_page": 100, "page": _page},
+                            timeout=10,
+                        )
+                        if _resp.status_code != 200:
+                            break
+                        _page_results = _resp.json()
+                        _results += [p["path_with_namespace"] for p in _page_results]
+                        if len(_page_results) < 100:
+                            break
+                        _page += 1
+                    except Exception:
+                        break
+            st.session_state["_repo_search_results"] = _results or []
+
+        _search_results = st.session_state.get("_repo_search_results", [])
+        if _search_results:
+            _fork_parent = st.selectbox(
+                "Select repo",
+                [None] + _search_results,
+                format_func=lambda x: "None (standard deployment)" if x is None else x,
+                key="cp_fork_parent_search",
+            )
+        elif _do_search:
+            st.caption("No repos found. Try a different search term.")
+            _fork_parent = None
+        else:
+            _fork_parent = _prefill_fp or None
 
     # Destination group toggle — controls which namespace the fork lands in
     _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
@@ -311,6 +408,12 @@ def render(client: DataOpsClient):
         key="configure_project_input",
         help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2 — auto-filled from fork parent + slug, editable.",
     )
+    salesforce_id_val = st.text_input(
+        "Salesforce Campaign ID",
+        value=prefill["salesforce_id"],
+        key="salesforce_id_input",
+        help="Passed as DATAOPS_CATALOG_SALESFORCE_ID in extra_env_vars",
+    )
 
     if _fork_parent and configure_project_val:
         _fork_key = f"fork_state_{configure_project_val}"
@@ -323,11 +426,11 @@ def render(client: DataOpsClient):
         _cp_status = None
         if configure_project_val:
             try:
-                _token = st.secrets.get("DATAOPS_API_TOKEN", "")
+                _token = get_token()
                 _cr = _requests.get(
                     f"{GITLAB_BASE}/projects/{_urlparse.quote(configure_project_val, safe='')}",
                     headers={"PRIVATE-TOKEN": _token},
-                    verify=False, timeout=5,
+                    timeout=5,
                 )
                 _cp_status = _cr.status_code
             except Exception:
@@ -346,7 +449,7 @@ def render(client: DataOpsClient):
             _fc1, _fc2 = st.columns([1, 3])
             with _fc1:
                 if st.button("Create Fork", type="primary", key="create_fork_btn", use_container_width=True):
-                    _token = st.secrets.get("DATAOPS_API_TOKEN", "")
+                    _token = get_token()
                     with st.spinner("Creating fork in GitLab..."):
                         _ok, _msg, _ = _gitlab_fork(_token, _fork_parent, configure_project_val)
                     if _ok and "already exists" in _msg:
@@ -499,6 +602,11 @@ def render(client: DataOpsClient):
     payload["organization_account_identifier"] = "SFSEHOL-SFSEHOL_ADMIN"
     payload["initial_pool_size"] = payload.get("pool_size", 0)
     payload["instructions"] = load_default_instructions()
+
+    # Salesforce Campaign ID → extra_env_vars
+    salesforce_id = st.session_state.get("salesforce_id_input", "").strip()
+    if salesforce_id:
+        payload["extra_env_vars"] = {"DATAOPS_CATALOG_SALESFORCE_ID": salesforce_id}
 
     # Store payload for the confirm step (shown on next rerun via the early-return path above)
     st.session_state["_pending_payload"] = payload
