@@ -2,40 +2,25 @@
 
 import streamlit as st
 from api_client import DataOpsClient, DataOpsAPIError
+from snowflake_helpers import get_token, get_query_params
+
+# Compatibility: older Streamlit (SiS) uses st.experimental_rerun()
+if not hasattr(st, "rerun"):
+    st.rerun = st.experimental_rerun
 
 st.set_page_config(page_title="DataOps Event Manager", page_icon="📋", layout="wide")
 
 
-def check_password() -> bool:
-    """Show a password gate if APP_PASSWORD is configured."""
-    app_password = st.secrets.get("APP_PASSWORD", "")
-    if not app_password:
-        return True
-
-    if st.session_state.get("password_ok"):
-        return True
-
-    st.title("🔒 DataOps Event Manager")
-    pwd = st.text_input("Enter app password:", type="password")
-    if st.button("Login"):
-        if pwd == app_password:
-            st.session_state["password_ok"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    return False
-
-
 def get_client() -> DataOpsClient:
-    """Get an authenticated DataOps API client from secrets."""
-    token = st.secrets.get("DATAOPS_API_TOKEN", "")
+    """Get an authenticated DataOps API client."""
+    token = get_token()
     if not token:
-        st.error("DATAOPS_API_TOKEN not configured in secrets.")
+        st.error("DataOps API token not configured. Check Snowflake Secret or st.secrets.")
         st.stop()
     return DataOpsClient(token)
 
 
-NAV_OPTIONS = ["Manage Events", "Create Event", "Patch Event", "Decommission Account"]
+NAV_OPTIONS = ["Manage Events", "Create Event", "Patch Event", "Decommission Account", "Admin"]
 
 # Map ?page= param values to nav labels
 _PAGE_PARAM_MAP = {
@@ -44,13 +29,11 @@ _PAGE_PARAM_MAP = {
     "list": "Manage Events",
     "patch": "Patch Event",
     "decommission": "Decommission Account",
+    "admin": "Admin",
 }
 
 
 def main():
-    if not check_password():
-        return
-
     # Sidebar
     st.sidebar.title("DataOps Event Manager")
 
@@ -63,9 +46,9 @@ def main():
         st.sidebar.error(f"API Error: {e}", icon="❌")
 
     # Resolve default nav from query params (deep-link support)
-    page_param = st.query_params.get("page", "")
-    default_nav = _PAGE_PARAM_MAP.get(page_param, "List Events")
-    default_index = NAV_OPTIONS.index(default_nav)
+    page_param = get_query_params().get("page", "")
+    default_nav = _PAGE_PARAM_MAP.get(page_param, "Create Event")
+    default_index = NAV_OPTIONS.index(default_nav) if default_nav in NAV_OPTIONS else 0
 
     # Navigation
     nav = st.sidebar.radio(
@@ -98,6 +81,9 @@ def main():
     elif nav == "Decommission Account":
         from views.decommission import render
         render(client)
+    elif nav == "Admin":
+        from views.admin import render
+        render()
 
 
 if __name__ == "__main__":

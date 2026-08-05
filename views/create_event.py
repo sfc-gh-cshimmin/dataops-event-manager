@@ -3,11 +3,47 @@
 import streamlit as st
 import urllib.parse as _urlparse
 import requests as _requests
-from datetime import date
+from datetime import date, time, datetime, timezone, timedelta
 from pathlib import Path
 from api_client import DataOpsClient, DataOpsAPIError
 from utils import validate_slug, parse_comma_list
 from snowflake_helpers import get_token, load_fork_parents, get_query_params
+
+
+# Common US timezone abbreviations → UTC offset hours
+_TZ_OFFSETS = {
+    "EST": -5, "EDT": -4, "ET": -5,
+    "CST": -6, "CDT": -5, "CT": -6,
+    "MST": -7, "MDT": -6, "MT": -7,
+    "PST": -8, "PDT": -7, "PT": -8,
+    "AKST": -9, "AKDT": -8,
+    "HST": -10, "HAST": -10,
+    "AST": -4, "ADT": -3,
+    "UTC": 0, "GMT": 0,
+    "CET": 1, "CEST": 2,
+    "IST": 5,  # +5:30 approximated
+    "JST": 9, "AEST": 10, "AEDT": 11,
+    "NZST": 12, "NZDT": 13,
+}
+
+
+def _tz_offset_str(tz_abbrev: str) -> str:
+    """Return an ISO offset string like '-05:00' for a timezone abbreviation."""
+    if not tz_abbrev:
+        return "+00:00"
+    key = tz_abbrev.strip().upper()
+    hours = _TZ_OFFSETS.get(key, 0)
+    sign = "+" if hours >= 0 else "-"
+    return f"{sign}{abs(hours):02d}:00"
+
+
+def _format_datetime(d: date | None, t: time | None, tz_abbrev: str) -> str | None:
+    """Combine date + time + timezone into an ISO datetime string."""
+    if not d:
+        return None
+    t = t or time(0, 0)
+    offset = _tz_offset_str(tz_abbrev)
+    return f"{d.isoformat()}T{t.strftime('%H:%M:%S')}{offset}"
 
 
 GITLAB_BASE = "https://app.dataops.live/api/v4"
@@ -57,7 +93,7 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
         return False, f"Error creating fork: {e}", ""
 
 
-EDITION_OPTIONS = ["ENTERPRISE", "STANDARD"]
+EDITION_OPTIONS = ["ENTERPRISE", "BUSINESS_CRITICAL", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
 _DELIVERY_FORMAT_MAP = {
@@ -83,7 +119,67 @@ def _map_delivery_format(raw: str) -> str:
     if lower in [v.lower() for v in DELIVERY_FORMAT_OPTIONS]:
         return lower.upper()
     return "OTHER"
-REGION_OPTIONS = ["aws_us_west_2", "aws_us_east_1", "aws_eu_west_1", "azure_eastus2", "gcp_us_central1"]
+REGION_OPTIONS = [
+    # AWS
+    "aws_us_west_2", "aws_us_east_1", "aws_us_east_2",
+    "aws_ca_central_1", "aws_sa_east_1",
+    "aws_eu_west_1", "aws_eu_west_2", "aws_eu_west_3",
+    "aws_eu_central_1", "aws_eu_central_2", "aws_eu_north_1",
+    "aws_ap_northeast_1", "aws_ap_northeast_2", "aws_ap_northeast_3",
+    "aws_ap_south_1", "aws_ap_southeast_1", "aws_ap_southeast_2", "aws_ap_southeast_3",
+    # GCP
+    "gcp_us_central1", "gcp_us_east4",
+    "gcp_europe_west2", "gcp_europe_west3", "gcp_europe_west4",
+    "gcp_me_central2",
+    # Azure
+    "azure_westus2", "azure_centralus", "azure_southcentralus", "azure_eastus2",
+    "azure_canadacentral", "azure_mexicocentral",
+    "azure_uksouth", "azure_northeurope", "azure_westeurope", "azure_switzerlandnorth",
+    "azure_uaenorth", "azure_centralindia", "azure_japaneast",
+    "azure_southeastasia", "azure_australiaeast",
+]
+
+REGION_LABELS = {
+    "aws_us_west_2":        "US West (Oregon) — aws_us_west_2",
+    "aws_us_east_1":        "US East (N. Virginia) — aws_us_east_1",
+    "aws_us_east_2":        "US East (Ohio) — aws_us_east_2",
+    "aws_ca_central_1":     "Canada (Central) — aws_ca_central_1",
+    "aws_sa_east_1":        "South America (São Paulo) — aws_sa_east_1",
+    "aws_eu_west_1":        "EU (Ireland) — aws_eu_west_1",
+    "aws_eu_west_2":        "EU (London) — aws_eu_west_2",
+    "aws_eu_west_3":        "EU (Paris) — aws_eu_west_3",
+    "aws_eu_central_1":     "EU (Frankfurt) — aws_eu_central_1",
+    "aws_eu_central_2":     "EU (Zurich) — aws_eu_central_2",
+    "aws_eu_north_1":       "EU (Stockholm) — aws_eu_north_1",
+    "aws_ap_northeast_1":   "Asia Pacific (Tokyo) — aws_ap_northeast_1",
+    "aws_ap_northeast_2":   "Asia Pacific (Seoul) — aws_ap_northeast_2",
+    "aws_ap_northeast_3":   "Asia Pacific (Osaka) — aws_ap_northeast_3",
+    "aws_ap_south_1":       "Asia Pacific (Mumbai) — aws_ap_south_1",
+    "aws_ap_southeast_1":   "Asia Pacific (Singapore) — aws_ap_southeast_1",
+    "aws_ap_southeast_2":   "Asia Pacific (Sydney) — aws_ap_southeast_2",
+    "aws_ap_southeast_3":   "Asia Pacific (Jakarta) — aws_ap_southeast_3",
+    "gcp_us_central1":      "GCP US Central (Iowa) — gcp_us_central1",
+    "gcp_us_east4":         "GCP US East (N. Virginia) — gcp_us_east4",
+    "gcp_europe_west2":     "GCP Europe West (London) — gcp_europe_west2",
+    "gcp_europe_west3":     "GCP Europe West (Frankfurt) — gcp_europe_west3",
+    "gcp_europe_west4":     "GCP Europe West (Netherlands) — gcp_europe_west4",
+    "gcp_me_central2":      "GCP Middle East (Dammam) — gcp_me_central2",
+    "azure_westus2":        "Azure West US 2 (Washington) — azure_westus2",
+    "azure_centralus":      "Azure Central US (Iowa) — azure_centralus",
+    "azure_southcentralus": "Azure South Central US (Texas) — azure_southcentralus",
+    "azure_eastus2":        "Azure East US 2 (Virginia) — azure_eastus2",
+    "azure_canadacentral":  "Azure Canada Central (Toronto) — azure_canadacentral",
+    "azure_mexicocentral":  "Azure Mexico Central (Mexico City) — azure_mexicocentral",
+    "azure_uksouth":        "Azure UK South (London) — azure_uksouth",
+    "azure_northeurope":    "Azure North Europe (Ireland) — azure_northeurope",
+    "azure_westeurope":     "Azure West Europe (Netherlands) — azure_westeurope",
+    "azure_switzerlandnorth": "Azure Switzerland North (Zurich) — azure_switzerlandnorth",
+    "azure_uaenorth":       "Azure UAE North (Dubai) — azure_uaenorth",
+    "azure_centralindia":   "Azure Central India (Pune) — azure_centralindia",
+    "azure_japaneast":      "Azure Japan East (Tokyo) — azure_japaneast",
+    "azure_southeastasia":  "Azure Southeast Asia (Singapore) — azure_southeastasia",
+    "azure_australiaeast":  "Azure Australia East (New South Wales) — azure_australiaeast",
+}
 
 
 def load_default_instructions() -> str:
@@ -112,9 +208,8 @@ def _read_prefill() -> dict:
             import json
             data = json.loads(raw_json)
             if isinstance(data, dict):
-                from datetime import timedelta as _td
                 _end = _parse_date_param(data.get("end_date"))
-                _decomm = _parse_date_param(data.get("decommission_date")) or (_end + _td(days=2) if _end else None)
+                _decomm = _parse_date_param(data.get("decommission_date")) or (_end + timedelta(days=2) if _end else None)
                 return {
                     "slug":              data.get("slug", ""),
                     "name":              data.get("name", ""),
@@ -129,15 +224,15 @@ def _read_prefill() -> dict:
                     "delivery_format":   _map_delivery_format(data.get("delivery_format", "")),
                     "configure_project": data.get("configure_project", ""),
                     "fork_parent":       data.get("fork_parent", ""),
+                    "timezone":          data.get("timezone", ""),
                 }
         except Exception:
             pass
 
     # Fallback: read from URL query params
     qp = get_query_params()
-    from datetime import timedelta as _td
     _end = _parse_date_param(qp.get("end_date"))
-    _decomm = _parse_date_param(qp.get("decommission_date")) or (_end + _td(days=2) if _end else None)
+    _decomm = _parse_date_param(qp.get("decommission_date")) or (_end + timedelta(days=2) if _end else None)
     return {
         "slug":              qp.get("slug", ""),
         "name":              qp.get("name", ""),
@@ -153,6 +248,7 @@ def _read_prefill() -> dict:
         "configure_project": qp.get("configure_project", ""),
         "fork_parent":       qp.get("fork_parent", ""),
         "salesforce_id":     qp.get("salesforce_id", ""),
+        "timezone":          qp.get("timezone", ""),
     }
 
 
@@ -293,115 +389,198 @@ def render(client: DataOpsClient):
     # Configure Project section — all outside form so fork button can react immediately
     st.subheader("Configure Project")
 
-    # Fork parent — fixed list OR repo search
     _prefill_fp = prefill["fork_parent"]
-
-    _fp_mode = st.radio(
-        "Fork Parent",
-        ["Common repos", "Search all repos"],
+    _default_cp_mode = "Fork a repo" if _prefill_fp else "Set configure project"
+    _cp_mode = st.radio(
+        "Mode",
+        ["Set configure project", "Fork a repo"],
+        index=["Set configure project", "Fork a repo"].index(_default_cp_mode),
         horizontal=True,
-        key="fp_mode_toggle",
-        help="Common repos = curated list. Search = query hands-on-labs and hands-on-lab-drafts groups.",
+        key="cp_mode_toggle",
+        help="Set configure project = search and pick a repo directly.  Fork a repo = create a fork first.",
     )
 
-    if _fp_mode == "Common repos":
-        # Load fork parents from Snowflake table (SiS) or hardcoded fallback (local dev)
-        _fork_parent_data = load_fork_parents()
-        _fp_labels = ["None (standard deployment)"] + [fp["label"] for fp in _fork_parent_data]
-        _fp_paths  = [None] + [fp["path"] for fp in _fork_parent_data]
-        _default_fp_idx = 0
-        if _prefill_fp:
-            for _i, _p in enumerate(_fp_paths):
-                if _p == _prefill_fp:
-                    _default_fp_idx = _i
-                    break
+    _fork_parent = None  # only set in Fork a repo mode
+    _selected_group = "Published HOLs"  # default; overridden in Fork a repo mode
 
-        _selected_fp_label = st.selectbox(
-            "Fork Parent Repo",
-            _fp_labels,
-            index=_default_fp_idx,
-            key="cp_fork_parent",
-            help="Repo to fork from.",
-        )
-        _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
-
-    else:  # Search all repos
-        _search_col, _btn_col = st.columns([4, 1])
-        with _search_col:
-            _repo_search = st.text_input(
+    if _cp_mode == "Set configure project":
+        # Search GitLab to directly set configure project path (no fork created)
+        _dc_col, _dc_btn = st.columns([4, 1])
+        with _dc_col:
+            _dc_search = st.text_input(
                 "Search repos",
-                key="repo_search_input",
+                key="dc_repo_search_input",
                 placeholder="e.g. cortex, zero-to-snowflake, data-engineering",
+                label_visibility="collapsed",
             )
-        with _btn_col:
-            _do_search = st.button("Search", key="repo_search_btn", use_container_width=True)
+        with _dc_btn:
+            _dc_do_search = st.button("Search", key="dc_repo_search_btn", use_container_width=True)
 
-        if _do_search and _repo_search.strip():
+        if _dc_do_search and _dc_search.strip():
             _token = get_token()
             _headers = {"PRIVATE-TOKEN": _token}
-            _results = []
-            for _gid in ["snowflake%2Fhands-on-labs", "snowflake%2Fhands-on-lab-drafts"]:
+            _dc_results = []
+            for _gid in ["snowflake"]:
                 _page = 1
                 while True:
                     try:
                         _resp = _requests.get(
                             f"{GITLAB_BASE}/groups/{_gid}/projects",
                             headers=_headers,
-                            params={"search": _repo_search.strip(), "per_page": 100, "page": _page},
+                            params={"search": _dc_search.strip(), "per_page": 100, "page": _page, "include_subgroups": "true"},
                             timeout=10,
                         )
                         if _resp.status_code != 200:
                             break
                         _page_results = _resp.json()
-                        _results += [p["path_with_namespace"] for p in _page_results]
+                        _dc_results += [p["path_with_namespace"] for p in _page_results]
                         if len(_page_results) < 100:
                             break
                         _page += 1
                     except Exception:
                         break
-            st.session_state["_repo_search_results"] = _results or []
+            st.session_state["_dc_search_results"] = _dc_results or []
 
-        _search_results = st.session_state.get("_repo_search_results", [])
-        if _search_results:
-            _fork_parent = st.selectbox(
+        _dc_results = st.session_state.get("_dc_search_results", [])
+        if _dc_results:
+            _dc_selected = st.selectbox(
                 "Select repo",
-                [None] + _search_results,
-                format_func=lambda x: "None (standard deployment)" if x is None else x,
-                key="cp_fork_parent_search",
+                [None] + _dc_results,
+                format_func=lambda x: "None" if x is None else x,
+                key="dc_repo_select",
             )
-        elif _do_search:
+            if _dc_selected:
+                _uc1, _uc2 = st.columns([1, 3])
+                with _uc1:
+                    if st.button("Use this repo", key="dc_use_repo_btn", type="primary", use_container_width=True):
+                        st.session_state["_cp_direct_path"] = _dc_selected
+                        st.rerun()
+                with _uc2:
+                    st.caption(f"Sets configure project to `{_dc_selected}`")
+        elif _dc_do_search:
             st.caption("No repos found. Try a different search term.")
-            _fork_parent = None
+
+        # In Set mode: init configure_project to prefill on first load only
+        _cp_state_key = ("direct", None)
+        if st.session_state.get("_cp_last_fork_parent") != _cp_state_key:
+            st.session_state["configure_project_input"] = prefill["configure_project"]
+            st.session_state["_cp_last_fork_parent"] = _cp_state_key
+
+    else:  # Fork a repo mode — existing fork parent UI
+        _fp_mode = st.radio(
+            "Fork Parent",
+            ["Common repos", "Search all repos"],
+            horizontal=True,
+            key="fp_mode_toggle",
+            help="Common repos = curated list. Search = query all repos in the snowflake group and subgroups.",
+        )
+
+        if _fp_mode == "Common repos":
+            _fork_parent_data = load_fork_parents()
+            _fp_labels = ["None (standard deployment)"] + [fp["label"] for fp in _fork_parent_data]
+            _fp_paths  = [None] + [fp["path"] for fp in _fork_parent_data]
+            _default_fp_idx = 0
+            if _prefill_fp:
+                for _i, _p in enumerate(_fp_paths):
+                    if _p == _prefill_fp:
+                        _default_fp_idx = _i
+                        break
+
+            _selected_fp_label = st.selectbox(
+                "Fork Parent Repo",
+                _fp_labels,
+                index=_default_fp_idx,
+                key="cp_fork_parent",
+                help="Repo to fork from.",
+            )
+            _fork_parent = _fp_paths[_fp_labels.index(_selected_fp_label)]
+
+        else:  # Search all repos for fork parent
+            _search_col, _btn_col = st.columns([4, 1])
+            with _search_col:
+                _repo_search = st.text_input(
+                    "Search repos",
+                    key="repo_search_input",
+                    placeholder="e.g. cortex, zero-to-snowflake, data-engineering",
+                    label_visibility="collapsed",
+                )
+            with _btn_col:
+                _do_search = st.button("Search", key="repo_search_btn", use_container_width=True)
+
+            if _do_search and _repo_search.strip():
+                _token = get_token()
+                _headers = {"PRIVATE-TOKEN": _token}
+                _results = []
+                for _gid in ["snowflake"]:
+                    _page = 1
+                    while True:
+                        try:
+                            _resp = _requests.get(
+                                f"{GITLAB_BASE}/groups/{_gid}/projects",
+                                headers=_headers,
+                                params={"search": _repo_search.strip(), "per_page": 100, "page": _page, "include_subgroups": "true"},
+                                timeout=10,
+                            )
+                            if _resp.status_code != 200:
+                                break
+                            _page_results = _resp.json()
+                            _results += [p["path_with_namespace"] for p in _page_results]
+                            if len(_page_results) < 100:
+                                break
+                            _page += 1
+                        except Exception:
+                            break
+                st.session_state["_repo_search_results"] = _results or []
+
+            _search_results = st.session_state.get("_repo_search_results", [])
+            if _search_results:
+                _fork_parent = st.selectbox(
+                    "Select repo",
+                    [None] + _search_results,
+                    format_func=lambda x: "None (standard deployment)" if x is None else x,
+                    key="cp_fork_parent_search",
+                )
+            elif _do_search:
+                st.caption("No repos found. Try a different search term.")
+                _fork_parent = None
+            else:
+                _fork_parent = _prefill_fp or None
+
+        # Destination group toggle — controls which namespace the fork lands in
+        _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
+        if "fork_group_toggle" not in st.session_state:
+            st.session_state["fork_group_toggle"] = _group_default
+        _selected_group = st.radio(
+            "Destination Group",
+            ["Drafts", "Published HOLs"],
+            horizontal=True,
+            key="fork_group_toggle",
+            help="Drafts = hands-on-lab-drafts  |  Published HOLs = hands-on-labs",
+        )
+        _dest_namespace = "hands-on-lab-drafts" if _selected_group == "Drafts" else "hands-on-labs"
+
+        # Auto-derive configure project path from fork parent + destination group + slug
+        _slug_val = (st.session_state.get("slug_input") or prefill["slug"] or "").strip()
+        _fork_parent_name = _fork_parent.split("/")[-1] if _fork_parent else ""
+        if _fork_parent and _slug_val:
+            _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}-{_slug_val}"
+        elif _fork_parent:
+            _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}"
         else:
-            _fork_parent = _prefill_fp or None
+            _auto_cp = prefill["configure_project"]
 
-    # Destination group toggle — controls which namespace the fork lands in
-    _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
-    if "fork_group_toggle" not in st.session_state:
-        st.session_state["fork_group_toggle"] = _group_default
-    _selected_group = st.radio(
-        "Destination Group",
-        ["Drafts", "Published HOLs"],
-        horizontal=True,
-        key="fork_group_toggle",
-        help="Drafts = hands-on-lab-drafts  |  Published HOLs = hands-on-labs",
-    )
-    _dest_namespace = "hands-on-lab-drafts" if _selected_group == "Drafts" else "hands-on-labs"
+        _cp_state_key = (_fork_parent, _selected_group)
+        if st.session_state.get("_cp_last_fork_parent") != _cp_state_key:
+            st.session_state["configure_project_input"] = _auto_cp
+            st.session_state["_cp_last_fork_parent"] = _cp_state_key
 
-    # Auto-derive configure project path from fork parent + destination group + slug
-    _slug_val = (st.session_state.get("slug_input") or prefill["slug"] or "").strip()
-    _fork_parent_name = _fork_parent.split("/")[-1] if _fork_parent else ""
-    if _fork_parent and _slug_val:
-        _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}-{_slug_val}"
-    elif _fork_parent:
-        _auto_cp = f"snowflake/{_dest_namespace}/{_fork_parent_name}"
-    else:
-        _auto_cp = prefill["configure_project"]
+    # Apply direct repo selection (Set configure project mode) before widget renders
+    if st.session_state.get("_cp_direct_path"):
+        st.session_state["configure_project_input"] = st.session_state.pop("_cp_direct_path")
 
-    _cp_state_key = (_fork_parent, _selected_group)
-    if st.session_state.get("_cp_last_fork_parent") != _cp_state_key:
-        st.session_state["configure_project_input"] = _auto_cp
-        st.session_state["_cp_last_fork_parent"] = _cp_state_key
+    # Apply standard fork success path before widget renders (avoids post-render mutation error)
+    if st.session_state.get("_std_fork_success_path"):
+        st.session_state["configure_project_input"] = st.session_state.pop("_std_fork_success_path")
 
     configure_project_val = st.text_input(
         "DataOps Configure Project Path",
@@ -415,7 +594,72 @@ def render(client: DataOpsClient):
         help="Passed as DATAOPS_CATALOG_SALESFORCE_ID in extra_env_vars",
     )
 
-    if _fork_parent and configure_project_val:
+    # Standard HOL fork toggle — only in Fork a repo mode, when no fork_parent from URL
+    if _cp_mode == "Fork a repo" and configure_project_val and not _fork_parent:
+        _std_fork_on = st.toggle(
+            "Fork this repo for this event",
+            key="std_fork_toggle",
+            help="Creates a fork named {parent_repo}-{slug}. Choose a destination group below.",
+        )
+        if _std_fork_on:
+            _slug_for_fork = (st.session_state.get("slug_input") or prefill["slug"] or "").strip()
+            _cp_parts    = configure_project_val.rstrip("/").split("/")
+            _cp_basename = _cp_parts[-1]
+            _parent_ns   = "/".join(_cp_parts[:-1])
+
+            _default_group = "Drafts" if "hands-on-lab-drafts" in _parent_ns else "Published HOLs"
+            _std_dest_group = st.radio(
+                "Destination Group",
+                ["Drafts", "Published HOLs"],
+                index=["Drafts", "Published HOLs"].index(_default_group),
+                horizontal=True,
+                key="std_fork_dest_group",
+                help="Drafts = hands-on-lab-drafts  |  Published HOLs = hands-on-labs",
+            )
+            _std_dest_ns   = "snowflake/hands-on-lab-drafts" if _std_dest_group == "Drafts" else "snowflake/hands-on-labs"
+            _suffix        = f"-{_slug_for_fork}" if _slug_for_fork else "-event"
+            _std_fork_path = f"{_std_dest_ns}/{_cp_basename}{_suffix}"
+
+            st.caption(f"Fork target: `{_std_fork_path}`")
+
+            _std_fork_key   = f"fork_state_{_std_fork_path}"
+            _std_fork_state = st.session_state.setdefault(_std_fork_key, None)
+            _std_fork_status = None
+            try:
+                _token = get_token()
+                _cr = _requests.get(
+                    f"{GITLAB_BASE}/projects/{_urlparse.quote(_std_fork_path, safe='')}",
+                    headers={"PRIVATE-TOKEN": _token},
+                    timeout=5,
+                )
+                _std_fork_status = _cr.status_code
+            except Exception:
+                pass
+
+            if _std_fork_state == "success":
+                st.success(f"Fork created: [{_std_fork_path}](https://app.dataops.live/{_std_fork_path})")
+            elif _std_fork_state == "exists" or _std_fork_status == 200:
+                st.info(f"Fork already exists — [{_std_fork_path}](https://app.dataops.live/{_std_fork_path})")
+            elif isinstance(_std_fork_state, str) and _std_fork_state:
+                st.error(_std_fork_state)
+
+            if _std_fork_state not in ("success", "exists") and _std_fork_status != 200:
+                _fc1, _fc2 = st.columns([1, 3])
+                with _fc1:
+                    if st.button("Create Fork", key="std_fork_btn", type="primary", use_container_width=True):
+                        with st.spinner("Creating fork..."):
+                            _ok, _msg, _ = _gitlab_fork(get_token(), configure_project_val, _std_fork_path)
+                        if _ok:
+                            st.session_state[_std_fork_key] = "exists" if "already exists" in _msg else "success"
+                            st.session_state["_std_fork_success_path"] = _std_fork_path
+                        else:
+                            st.session_state[_std_fork_key] = _msg
+                        st.rerun()
+                with _fc2:
+                    st.caption(f"Forks `{configure_project_val}` → `{_std_fork_path}`")
+
+    # Custom event fork button — only in Fork a repo mode, when fork_parent was passed via URL
+    if _cp_mode == "Fork a repo" and _fork_parent and configure_project_val:
         _fork_key = f"fork_state_{configure_project_val}"
         if _fork_key not in st.session_state:
             st.session_state[_fork_key] = None
@@ -461,15 +705,17 @@ def render(client: DataOpsClient):
                     st.rerun()
             with _fc2:
                 st.caption(f"Forks `{_fork_parent}` → `{configure_project_val}`")
-    elif configure_project_val:
-        st.caption("Standard HOL content — no fork needed.")
 
     with st.form("create_event_form"):
         st.subheader("Required Fields")
-        decommission_date = st.date_input(
-            "Decommission Date*",
-            value=prefill["decommission_date"],
-        )
+        decomm_col1, decomm_col2 = st.columns(2)
+        with decomm_col1:
+            decommission_date = st.date_input(
+                "Decommission Date*",
+                value=prefill["decommission_date"],
+            )
+        with decomm_col2:
+            decommission_time = st.time_input("Decomm Time", value=time(22, 0))
         st.subheader("Event Details")
         name = st.text_input("Event Name", value=prefill["name"])
         location = st.text_input("Location", value="Virtual")
@@ -480,14 +726,23 @@ def render(client: DataOpsClient):
                   if prefill["delivery_format"] in DELIVERY_FORMAT_OPTIONS else 0,
         )
 
-        st.subheader("Dates")
+        st.subheader("Dates & Times")
+        _tz_val = prefill.get("timezone", "")
+        event_timezone = st.text_input(
+            "Timezone",
+            value=_tz_val,
+            help="Timezone abbreviation (e.g. EST, PST, UTC). Used to set time offsets on date fields.",
+        )
         col1, col2, col3 = st.columns(3)
         with col1:
             build_date = st.date_input("Build Date", value=prefill["build_date"])
+            build_time = st.time_input("Build Time", value=time(0, 0))
         with col2:
             start_date = st.date_input("Start Date", value=prefill["start_date"])
+            start_time = st.time_input("Start Time", value=time(0, 0))
         with col3:
             end_date = st.date_input("End Date", value=prefill["end_date"])
+            end_time = st.time_input("End Time", value=time(22, 0))
 
         st.subheader("Configuration")
         col_a, col_b = st.columns(2)
@@ -497,6 +752,7 @@ def render(client: DataOpsClient):
             region = st.selectbox(
                 "Region Group", REGION_OPTIONS,
                 index=REGION_OPTIONS.index(prefill["region"]) if prefill["region"] in REGION_OPTIONS else 0,
+                format_func=lambda r: REGION_LABELS.get(r, r),
                 key="region_group",
             )
         with col_b:
@@ -534,10 +790,16 @@ def render(client: DataOpsClient):
                 if _p.get("delivery_format"): st.markdown(f"**Format:** {_p['delivery_format']}")
                 if _p.get("pool_size"): st.markdown(f"**Pool Size:** {_p['pool_size']}")
             with _pc2:
-                if _p.get("build_date"): st.markdown(f"**Build Date:** {_p['build_date'][:10]}")
-                if _p.get("start_date"): st.markdown(f"**Start:** {_p['start_date'][:10]}")
-                if _p.get("end_date"): st.markdown(f"**End:** {_p['end_date'][:10]}")
-                if _p.get("decommission_date"): st.markdown(f"**Decomm:** {_p['decommission_date'][:10]}")
+                def _fmt_dt(iso: str) -> str:
+                    try:
+                        _dt = datetime.fromisoformat(iso)
+                        return _dt.strftime("%b %d, %Y at %I:%M %p") + f" ({iso[-6:]})"
+                    except Exception:
+                        return iso
+                if _p.get("build_date"): st.markdown(f"**Build Date:** {_fmt_dt(_p['build_date'])}")
+                if _p.get("start_date"): st.markdown(f"**Start:** {_fmt_dt(_p['start_date'])}")
+                if _p.get("end_date"): st.markdown(f"**End:** {_fmt_dt(_p['end_date'])}")
+                if _p.get("decommission_date"): st.markdown(f"**Decomm:** {_fmt_dt(_p['decommission_date'])}")
             if _p.get("dataops_configure_project_path"):
                 st.markdown(f"**Configure Project:** `{_p['dataops_configure_project_path']}`")
             with st.expander("Raw payload", expanded=False):
@@ -561,9 +823,10 @@ def render(client: DataOpsClient):
         return
 
     # Build payload
+    _tz = event_timezone.strip() if event_timezone else ""
     payload = {
         "slug": slug,
-        "decommission_date": f"{decommission_date.isoformat()}T00:00:00Z",
+        "decommission_date": _format_datetime(decommission_date, decommission_time, _tz),
     }
 
     if name:
@@ -573,11 +836,11 @@ def render(client: DataOpsClient):
     if delivery_format:
         payload["delivery_format"] = delivery_format
     if build_date:
-        payload["build_date"] = f"{build_date.isoformat()}T00:00:00Z"
+        payload["build_date"] = _format_datetime(build_date, build_time, _tz)
     if start_date:
-        payload["start_date"] = f"{start_date.isoformat()}T00:00:00Z"
+        payload["start_date"] = _format_datetime(start_date, start_time, _tz)
     if end_date:
-        payload["end_date"] = f"{end_date.isoformat()}T00:00:00Z"
+        payload["end_date"] = _format_datetime(end_date, end_time, _tz)
     if pool_size > 0:
         payload["pool_size"] = pool_size
     if configure_project:

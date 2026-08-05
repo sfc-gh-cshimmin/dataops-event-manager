@@ -157,7 +157,7 @@ def render(client: DataOpsClient):
             "Approved": "✅" if is_app else "⏳",
         })
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     slugs = [ev.get("slug", "") for ev in events if ev.get("slug")]
     if not slugs:

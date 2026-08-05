@@ -1,0 +1,1 @@
+/Users/cshimmin/dataops-event-manager/views/admin.py
