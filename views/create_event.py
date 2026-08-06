@@ -93,6 +93,49 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
         return False, f"Error creating fork: {e}", ""
 
 
+def _gitlab_add_member(token: str, project_path: str, email: str, access_level: int = 40) -> tuple[bool, str]:
+    """Add a user (by email) to a GitLab project with the given access level (40 = Maintainer).
+    Returns (success, message).
+    """
+    headers = {"PRIVATE-TOKEN": token}
+    # Look up the user by email
+    try:
+        resp = _requests.get(
+            f"{GITLAB_BASE}/users",
+            headers=headers,
+            params={"search": email},
+            timeout=10,
+        )
+        users = resp.json() if resp.status_code == 200 else []
+        # Find an exact email match
+        user_id = next((u["id"] for u in users if u.get("public_email") == email or u.get("email") == email), None)
+        if not user_id and users:
+            user_id = users[0]["id"]  # fallback: first result
+        if not user_id:
+            return False, f"Could not find GitLab user for {email}."
+    except Exception as e:
+        return False, f"Error looking up user: {e}"
+
+    # Add member to project
+    try:
+        _proj_encoded = _urlparse.quote(project_path, safe="")
+        add_resp = _requests.post(
+            f"{GITLAB_BASE}/projects/{_proj_encoded}/members",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"user_id": user_id, "access_level": access_level},
+            timeout=10,
+        )
+        if add_resp.status_code in (200, 201):
+            return True, f"Added {email} as Maintainer."
+        elif add_resp.status_code == 409:
+            return True, f"{email} is already a member."
+        else:
+            body = add_resp.json()
+            return False, f"Failed to add member (HTTP {add_resp.status_code}): {body.get('message', body)}"
+    except Exception as e:
+        return False, f"Error adding member: {e}"
+
+
 EDITION_OPTIONS = ["ENTERPRISE", "BUSINESS_CRITICAL", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
@@ -275,6 +318,7 @@ def render(client: DataOpsClient):
     if st.session_state.get("_create_pending"):
         _payload = st.session_state.pop("_create_payload", {})
         _slug = st.session_state.pop("_create_slug", "")
+        _instructor_emails = st.session_state.pop("_pending_instructors", [])
         st.session_state.pop("_create_pending", None)
         with st.spinner("Creating event..."):
             try:
@@ -293,6 +337,13 @@ def render(client: DataOpsClient):
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
                 return
+        # Add instructors after successful event creation
+        if _instructor_emails:
+            try:
+                client.add_instructors(_slug, _instructor_emails)
+                st.session_state["_just_created"]["instructors_added"] = _instructor_emails
+            except Exception as _ie:
+                st.session_state["_just_created"]["instructor_error"] = str(_ie)
         st.rerun()
 
     # Show persistent success page after event creation
@@ -328,6 +379,11 @@ def render(client: DataOpsClient):
         if isinstance(_jc.get("result"), dict):
             with st.expander("API response", expanded=False):
                 st.json(_jc["result"])
+        # Instructor results
+        if _jc.get("instructors_added"):
+            st.success(f"✅ Instructors added: {', '.join(_jc['instructors_added'])}")
+        elif _jc.get("instructor_error"):
+            st.warning(f"⚠️ Event created but instructor assignment failed: {_jc['instructor_error']}")
         if st.button("Create Another Event", key="create_another_btn"):
             st.session_state.pop("_just_created", None)
             st.rerun()
@@ -640,6 +696,9 @@ def render(client: DataOpsClient):
                 st.success(f"Fork created: [{_std_fork_path}](https://app.dataops.live/{_std_fork_path})")
             elif _std_fork_state == "exists" or _std_fork_status == 200:
                 st.info(f"Fork already exists — [{_std_fork_path}](https://app.dataops.live/{_std_fork_path})")
+            _mem_result = st.session_state.get(f"_fork_member_{_std_fork_path}")
+            if _mem_result:
+                st.caption(f"👤 {_mem_result}")
             elif isinstance(_std_fork_state, str) and _std_fork_state:
                 st.error(_std_fork_state)
 
@@ -647,11 +706,15 @@ def render(client: DataOpsClient):
                 _fc1, _fc2 = st.columns([1, 3])
                 with _fc1:
                     if st.button("Create Fork", key="std_fork_btn", type="primary", use_container_width=True):
+                        _token = get_token()
                         with st.spinner("Creating fork..."):
-                            _ok, _msg, _ = _gitlab_fork(get_token(), configure_project_val, _std_fork_path)
+                            _ok, _msg, _ = _gitlab_fork(_token, configure_project_val, _std_fork_path)
                         if _ok:
                             st.session_state[_std_fork_key] = "exists" if "already exists" in _msg else "success"
                             st.session_state["_std_fork_success_path"] = _std_fork_path
+                            if prefill.get("attendee_email"):
+                                _mem_ok, _mem_msg = _gitlab_add_member(_token, _std_fork_path, prefill["attendee_email"])
+                                st.session_state[f"_fork_member_{_std_fork_path}"] = _mem_msg
                         else:
                             st.session_state[_std_fork_key] = _msg
                         st.rerun()
@@ -684,6 +747,9 @@ def render(client: DataOpsClient):
             st.success(f"Fork created: [{configure_project_val}]({_fork_url})")
         elif _fork_state == "exists" or _cp_status == 200:
             st.info(f"Project already exists: [{configure_project_val}]({_fork_url}) — proceed with event form below.")
+        _mem_result_custom = st.session_state.get(f"_fork_member_{configure_project_val}")
+        if _mem_result_custom:
+            st.caption(f"👤 {_mem_result_custom}")
         elif _cp_status == 404:
             st.success(f"✅ Fork path `{configure_project_val}` is available.")
         elif isinstance(_fork_state, str) and _fork_state:
@@ -700,6 +766,9 @@ def render(client: DataOpsClient):
                         st.session_state[_fork_key] = "exists"
                     elif _ok:
                         st.session_state[_fork_key] = "success"
+                        if prefill.get("attendee_email"):
+                            _mem_ok, _mem_msg = _gitlab_add_member(_token, configure_project_val, prefill["attendee_email"])
+                            st.session_state[f"_fork_member_{configure_project_val}"] = _mem_msg
                     else:
                         st.session_state[_fork_key] = _msg
                     st.rerun()
@@ -763,6 +832,16 @@ def render(client: DataOpsClient):
             instructor_reconfigure = st.checkbox("Instructor Reconfigure")
 
         allowed_domains = st.text_input("Allowed Email Domains", help="Comma-separated, e.g. snowflake.com, acme.org")
+
+        # Instructors section
+        st.subheader("Instructors")
+        if prefill["attendee_email"]:
+            st.caption(f"Requestor will be added as instructor automatically: **{prefill['attendee_name']}** &lt;{prefill['attendee_email']}&gt;")
+        additional_instructors_raw = st.text_input(
+            "Additional Instructor Emails",
+            placeholder="alice@snowflake.com, bob@snowflake.com",
+            help="Comma-separated. Note: additional instructors from the LIFT ticket are not yet available automatically.",
+        )
 
         # Attendee pre-fill (shown read-only so user knows what will be submitted)
         if prefill["attendee_email"]:
@@ -871,7 +950,17 @@ def render(client: DataOpsClient):
     if salesforce_id:
         payload["extra_env_vars"] = {"DATAOPS_CATALOG_SALESFORCE_ID": salesforce_id}
 
+    # Build instructor email list: requestor first, then any additional
+    _instructor_emails = []
+    if prefill["attendee_email"]:
+        _instructor_emails.append(prefill["attendee_email"].strip())
+    for _em in parse_comma_list(additional_instructors_raw):
+        _em = _em.strip()
+        if _em and _em not in _instructor_emails:
+            _instructor_emails.append(_em)
+
     # Store payload for the confirm step (shown on next rerun via the early-return path above)
     st.session_state["_pending_payload"] = payload
     st.session_state["_pending_slug"] = slug
+    st.session_state["_pending_instructors"] = _instructor_emails
     st.rerun()
