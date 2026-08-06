@@ -38,12 +38,15 @@ def _tz_offset_str(tz_abbrev: str) -> str:
 
 
 def _format_datetime(d: date | None, t: time | None, tz_abbrev: str) -> str | None:
-    """Combine date + time + timezone into an ISO datetime string."""
+    """Combine date + time into an ISO datetime string offset for DataOps display.
+    DataOps displays all datetimes in UTC+9 (JST), so we always encode with +09:00
+    so that the time entered by the user is the time shown in DataOps.
+    tz_abbrev is retained as a form field for reference but does not affect the API value.
+    """
     if not d:
         return None
     t = t or time(0, 0)
-    offset = _tz_offset_str(tz_abbrev)
-    return f"{d.isoformat()}T{t.strftime('%H:%M:%S')}{offset}"
+    return f"{d.isoformat()}T{t.strftime('%H:%M:%S')}+09:00"
 
 
 GITLAB_BASE = "https://app.dataops.live/api/v4"
@@ -495,7 +498,7 @@ def render(client: DataOpsClient):
                         _page += 1
                     except Exception:
                         break
-            st.session_state["_dc_search_results"] = _dc_results or []
+            _dc_results = [p for p in _dc_results if not p.startswith("snowflake/instances/")]
 
         _dc_results = st.session_state.get("_dc_search_results", [])
         if _dc_results:
@@ -586,7 +589,7 @@ def render(client: DataOpsClient):
                             _page += 1
                         except Exception:
                             break
-                st.session_state["_repo_search_results"] = _results or []
+                st.session_state["_repo_search_results"] = [p for p in _results if not p.startswith("snowflake/instances/")] or []
 
             _search_results = st.session_state.get("_repo_search_results", [])
             if _search_results:
