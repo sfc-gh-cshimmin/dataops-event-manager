@@ -68,6 +68,24 @@ def main():
     if slug != st.session_state.get("selected_event_slug", ""):
         st.session_state["selected_event_slug"] = slug
 
+    st.sidebar.divider()
+    _COMMON_TZ = [
+        "PST", "PDT", "MST", "MDT", "CST", "CDT", "EST", "EDT",
+        "AKST", "AKDT", "HST",
+        "GMT", "UTC",
+        "BST", "CET", "CEST",
+        "IST", "JST", "AEST", "AEDT", "NZST", "NZDT",
+    ]
+    _default_tz = st.session_state.get("creator_tz", "PDT")
+    _tz_idx = _COMMON_TZ.index(_default_tz) if _default_tz in _COMMON_TZ else 1
+    _creator_tz = st.sidebar.selectbox(
+        "Your Timezone",
+        _COMMON_TZ,
+        index=_tz_idx,
+        key="creator_tz",
+        help="Your current timezone. Used to convert entered event times to UTC.",
+    )
+
     # Route to views
     if nav == "Manage Events":
         from views.list_events import render

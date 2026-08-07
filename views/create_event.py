@@ -38,15 +38,20 @@ def _tz_offset_str(tz_abbrev: str) -> str:
 
 
 def _format_datetime(d: date | None, t: time | None, tz_abbrev: str) -> str | None:
-    """Combine date + time into an ISO datetime string offset for DataOps display.
-    DataOps displays all datetimes in UTC+9 (JST), so we always encode with +09:00
-    so that the time entered by the user is the time shown in DataOps.
-    tz_abbrev is retained as a form field for reference but does not affect the API value.
+    """Combine date + time into a UTC ISO string for the DataOps API.
+    Uses the creator's timezone (set in the sidebar) to convert local time → UTC.
+    DataOps displays datetimes in the viewer's browser timezone, so the stored UTC
+    will appear as the correct local time for anyone in the same timezone as the creator.
+    Formula: stored_UTC = desired_local_time - creator_tz_offset
     """
     if not d:
         return None
     t = t or time(0, 0)
-    return f"{d.isoformat()}T{t.strftime('%H:%M:%S')}+09:00"
+    # Use creator timezone from sidebar session state; fall back to PDT (-7)
+    creator_tz = st.session_state.get("creator_tz", "PDT")
+    tz_hours = _TZ_OFFSETS.get(creator_tz.strip().upper(), -7)
+    _dt = datetime(d.year, d.month, d.day, t.hour, t.minute) - timedelta(hours=tz_hours)
+    return f"{_dt.strftime('%Y-%m-%d')}T{_dt.strftime('%H:%M:%S')}Z"
 
 
 GITLAB_BASE = "https://app.dataops.live/api/v4"
@@ -173,6 +178,7 @@ REGION_OPTIONS = [
     "aws_eu_central_1", "aws_eu_central_2", "aws_eu_north_1",
     "aws_ap_northeast_1", "aws_ap_northeast_2", "aws_ap_northeast_3",
     "aws_ap_south_1", "aws_ap_southeast_1", "aws_ap_southeast_2", "aws_ap_southeast_3",
+    "aws_us_gov_east_1",
     # GCP
     "gcp_us_central1", "gcp_us_east4",
     "gcp_europe_west2", "gcp_europe_west3", "gcp_europe_west4",
@@ -204,6 +210,7 @@ REGION_LABELS = {
     "aws_ap_southeast_1":   "Asia Pacific (Singapore) — aws_ap_southeast_1",
     "aws_ap_southeast_2":   "Asia Pacific (Sydney) — aws_ap_southeast_2",
     "aws_ap_southeast_3":   "Asia Pacific (Jakarta) — aws_ap_southeast_3",
+    "aws_us_gov_east_1":    "AWS GovCloud US-East — aws_us_gov_east_1",
     "gcp_us_central1":      "GCP US Central (Iowa) — gcp_us_central1",
     "gcp_us_east4":         "GCP US East (N. Virginia) — gcp_us_east4",
     "gcp_europe_west2":     "GCP Europe West (London) — gcp_europe_west2",
@@ -322,6 +329,7 @@ def render(client: DataOpsClient):
         _payload = st.session_state.pop("_create_payload", {})
         _slug = st.session_state.pop("_create_slug", "")
         _instructor_emails = st.session_state.pop("_pending_instructors", [])
+        _instructor_reconfigure = st.session_state.pop("_pending_instructor_reconfigure", False)
         st.session_state.pop("_create_pending", None)
         with st.spinner("Creating event..."):
             try:
@@ -340,6 +348,13 @@ def render(client: DataOpsClient):
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
                 return
+        # Patch instructor_reconfigure (PATCH-only field, not in create schema)
+        if _instructor_reconfigure:
+            try:
+                client.patch_event(_slug, {"instructor_reconfigure": True})
+                st.session_state["_just_created"]["instructor_reconfigure"] = True
+            except Exception as _pe:
+                st.session_state["_just_created"]["instructor_reconfigure_error"] = str(_pe)
         # Add instructors after successful event creation
         if _instructor_emails:
             try:
@@ -930,8 +945,7 @@ def render(client: DataOpsClient):
     if is_express:
         payload["is_express"] = True
         payload["express_token_duration_hours"] = express_hours
-    if instructor_reconfigure:
-        payload["instructor_reconfigure"] = True
+    # instructor_reconfigure is a PATCH-only field — stored separately and applied after creation
     if allowed_domains:
         payload["allowed_email_domains"] = parse_comma_list(allowed_domains)
     if prefill["attendee_email"]:
@@ -966,4 +980,5 @@ def render(client: DataOpsClient):
     st.session_state["_pending_payload"] = payload
     st.session_state["_pending_slug"] = slug
     st.session_state["_pending_instructors"] = _instructor_emails
+    st.session_state["_pending_instructor_reconfigure"] = instructor_reconfigure
     st.rerun()
