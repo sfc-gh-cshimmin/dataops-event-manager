@@ -554,9 +554,11 @@ def render(client: DataOpsClient):
             _fp_labels = ["None (standard deployment)"] + [fp["label"] for fp in _fork_parent_data]
             _fp_paths  = [None] + [fp["path"] for fp in _fork_parent_data]
             _default_fp_idx = 0
-            if _prefill_fp:
+            # For custom events: use fork_parent from URL; for standard HOLs: fall back to configure_project
+            _effective_fp_prefill = _prefill_fp or prefill.get("configure_project", "")
+            if _effective_fp_prefill:
                 for _i, _p in enumerate(_fp_paths):
-                    if _p == _prefill_fp:
+                    if _p == _effective_fp_prefill:
                         _default_fp_idx = _i
                         break
 
@@ -618,7 +620,7 @@ def render(client: DataOpsClient):
                 st.caption("No repos found. Try a different search term.")
                 _fork_parent = None
             else:
-                _fork_parent = _prefill_fp or None
+                _fork_parent = _prefill_fp or prefill.get("configure_project") or None
 
         # Destination group toggle — controls which namespace the fork lands in
         _group_default = "Drafts" if (_prefill_fp and "hands-on-lab-drafts" in _prefill_fp) else "Published HOLs"
