@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timezone, timedelta
 from api_client import DataOpsClient, DataOpsAPIError
 from utils import format_datetime
 
@@ -92,7 +93,7 @@ def _render_event_detail(client: DataOpsClient, slug: str):
 
     # Quick actions
     st.divider()
-    act1, act2 = st.columns(2)
+    act1, act2, act3 = st.columns(3)
     with act1:
         if st.button("✏️ Edit this event", key=f"edit_{slug}"):
             st.session_state["selected_event_slug"] = slug
@@ -103,10 +104,44 @@ def _render_event_detail(client: DataOpsClient, slug: str):
             st.session_state["selected_event_slug"] = slug
             st.session_state["nav_override"] = "Decommission Account"
             st.rerun()
+    with act3:
+        if st.button("⛔ Decommission Event", type="primary", key=f"decomm_event_{slug}"):
+            st.session_state["_list_confirm_decomm_slug"] = slug
+
+    if st.session_state.get("_list_confirm_decomm_slug") == slug:
+        st.warning(
+            f"⚠️ This will set the decommission date to **now** for `{slug}`. "
+            "All accounts will begin decommissioning."
+        )
+        _dc1, _dc2, _ = st.columns([1, 1, 4])
+        with _dc1:
+            if st.button("Yes, Decommission", type="primary", key=f"decomm_event_confirm_{slug}"):
+                st.session_state["_list_decomm_pending"] = True
+                st.session_state["_list_decomm_slug"] = slug
+                st.rerun()
+        with _dc2:
+            if st.button("Cancel", key=f"decomm_event_cancel_{slug}"):
+                st.session_state.pop("_list_confirm_decomm_slug", None)
+                st.rerun()
 
 
 def render(client: DataOpsClient):
     st.header("📋 Manage Events")
+
+    # Execute pending decommission (must be before any early return)
+    if st.session_state.get("_list_decomm_pending"):
+        _slug = st.session_state.pop("_list_decomm_slug", "")
+        st.session_state.pop("_list_decomm_pending", None)
+        st.session_state.pop("_list_confirm_decomm_slug", None)
+        _now_jst = datetime.now(timezone(timedelta(hours=9)))
+        _decomm_str = _now_jst.strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        try:
+            client.patch_event(_slug, {"decommission_date": _decomm_str})
+            st.success(f"Decommission date for `{_slug}` set to {_decomm_str}.")
+        except DataOpsAPIError as _de:
+            st.error(f"Decommission failed: {_de}")
+        except Exception as _de:
+            st.error(f"Unexpected error: {_de}")
 
     # Execute pending approve (must be before any early return)
     if st.session_state.get("_list_approve_pending"):

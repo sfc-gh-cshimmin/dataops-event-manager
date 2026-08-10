@@ -1,6 +1,7 @@
 """View event details."""
 
 import streamlit as st
+from datetime import datetime, timezone, timedelta
 from api_client import DataOpsClient, DataOpsAPIError
 from utils import format_datetime
 
@@ -90,7 +91,7 @@ def render(client: DataOpsClient):
 
     # Quick actions
     st.divider()
-    col_a, col_b = st.columns(2)
+    col_a, col_b, col_c = st.columns(3)
     with col_a:
         if st.button("✏️ Edit this event"):
             st.session_state["selected_event_slug"] = slug
@@ -101,3 +102,31 @@ def render(client: DataOpsClient):
             st.session_state["selected_event_slug"] = slug
             st.session_state["nav_override"] = "Decommission Account"
             st.rerun()
+    with col_c:
+        if st.button("⛔ Decommission Event", type="primary"):
+            st.session_state["_confirm_decomm_slug"] = slug
+
+    if st.session_state.get("_confirm_decomm_slug") == slug:
+        st.warning(
+            f"⚠️ This will set the decommission date to **now** for `{slug}`. "
+            "All accounts will begin decommissioning."
+        )
+        _dc1, _dc2, _ = st.columns([1, 1, 4])
+        with _dc1:
+            if st.button("Yes, Decommission", type="primary", key="decomm_confirm_btn"):
+                # Send current time as UTC+9 (DataOps display timezone)
+                _now_jst = datetime.now(timezone(timedelta(hours=9)))
+                _decomm_str = _now_jst.strftime("%Y-%m-%dT%H:%M:%S+09:00")
+                try:
+                    client.patch_event(slug, {"decommission_date": _decomm_str})
+                    st.success(f"Decommission date set to {_decomm_str}.")
+                    st.session_state.pop("_confirm_decomm_slug", None)
+                    st.rerun()
+                except DataOpsAPIError as _de:
+                    st.error(f"Failed: {_de}")
+                except Exception as _de:
+                    st.error(f"Unexpected error: {_de}")
+        with _dc2:
+            if st.button("Cancel", key="decomm_cancel_btn"):
+                st.session_state.pop("_confirm_decomm_slug", None)
+                st.rerun()

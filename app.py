@@ -20,7 +20,7 @@ def get_client() -> DataOpsClient:
     return DataOpsClient(token)
 
 
-NAV_OPTIONS = ["Manage Events", "Create Event", "Patch Event", "Decommission Account", "Admin"]
+NAV_OPTIONS = ["Manage Events", "View Event", "Create Event", "Patch Event", "Decommission Account", "Admin"]
 
 # Map ?page= param values to nav labels
 _PAGE_PARAM_MAP = {
@@ -49,6 +49,11 @@ def main():
     page_param = get_query_params().get("page", "")
     default_nav = _PAGE_PARAM_MAP.get(page_param, "Create Event")
     default_index = NAV_OPTIONS.index(default_nav) if default_nav in NAV_OPTIONS else 0
+
+    # Apply nav_override (set by action buttons in views) before radio renders
+    _nav_override = st.session_state.pop("nav_override", None)
+    if _nav_override and _nav_override in NAV_OPTIONS:
+        st.session_state["nav_radio"] = _nav_override
 
     # Navigation
     nav = st.sidebar.radio(
@@ -89,6 +94,9 @@ def main():
     # Route to views
     if nav == "Manage Events":
         from views.list_events import render
+        render(client)
+    elif nav == "View Event":
+        from views.view_event import render
         render(client)
     elif nav == "Create Event":
         from views.create_event import render
