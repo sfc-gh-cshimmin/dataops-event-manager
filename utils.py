@@ -53,7 +53,8 @@ def slugify_hol_name(name: str) -> str:
 
 
 def parse_comma_list(text: str) -> list[str]:
-    """Parse a comma-separated string into a list of trimmed strings."""
+    """Parse a comma- or whitespace-delimited string into a list of trimmed strings."""
     if not text.strip():
         return []
-    return [item.strip() for item in text.split(",") if item.strip()]
+    import re
+    return [item for item in re.split(r"[,\s]+", text.strip()) if item]
