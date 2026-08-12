@@ -963,6 +963,7 @@ def render(client: DataOpsClient):
     payload["organization_account_identifier"] = "SFSEHOL-SFSEHOL_ADMIN"
     payload["initial_pool_size"] = payload.get("pool_size", 0)
     payload["instructions"] = load_default_instructions()
+    payload["grant_reporter_access_to_configure_project"] = True
 
     # Salesforce Campaign ID → extra_env_vars
     salesforce_id = st.session_state.get("salesforce_id_input", "").strip()
