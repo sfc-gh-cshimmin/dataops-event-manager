@@ -964,6 +964,9 @@ def render(client: DataOpsClient):
     payload["initial_pool_size"] = payload.get("pool_size", 0)
     payload["instructions"] = load_default_instructions()
     payload["grant_reporter_access_to_configure_project"] = True
+    # Snowflake HOL best practice: disable DataOps group/credential setup for attendees
+    payload["setup_dataops_group_and_add_creds_for_attendees"] = False
+    payload["dataops_top_level_group_path"] = "snowflake/event"
 
     # Salesforce Campaign ID → extra_env_vars
     salesforce_id = st.session_state.get("salesforce_id_input", "").strip()
