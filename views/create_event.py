@@ -102,46 +102,37 @@ def _gitlab_fork(token: str, fork_parent_path: str, configure_project: str) -> t
 
 
 def _gitlab_add_member(token: str, project_path: str, email: str, access_level: int = 40) -> tuple[bool, str]:
-    """Add a user (by email) to a GitLab project with the given access level (40 = Maintainer).
+    """Add a user (by email) to a GitLab project via the invitations API (access_level 40 = Maintainer).
     Returns (success, message).
     """
-    headers = {"PRIVATE-TOKEN": token}
-    # Look up the user by email
+    headers = {"PRIVATE-TOKEN": token, "Content-Type": "application/json"}
+    _proj_encoded = _urlparse.quote(project_path, safe="")
     try:
-        resp = _requests.get(
-            f"{GITLAB_BASE}/users",
+        resp = _requests.post(
+            f"{GITLAB_BASE}/projects/{_proj_encoded}/invitations",
             headers=headers,
-            params={"search": email},
+            json={"email": email, "access_level": access_level},
             timeout=10,
         )
-        users = resp.json() if resp.status_code == 200 else []
-        # Find an exact email match
-        user_id = next((u["id"] for u in users if u.get("public_email") == email or u.get("email") == email), None)
-        if not user_id and users:
-            user_id = users[0]["id"]  # fallback: first result
-        if not user_id:
-            return False, f"Could not find GitLab user for {email}."
-    except Exception as e:
-        return False, f"Error looking up user: {e}"
-
-    # Add member to project
-    try:
-        _proj_encoded = _urlparse.quote(project_path, safe="")
-        add_resp = _requests.post(
-            f"{GITLAB_BASE}/projects/{_proj_encoded}/members",
-            headers={**headers, "Content-Type": "application/json"},
-            json={"user_id": user_id, "access_level": access_level},
-            timeout=10,
-        )
-        if add_resp.status_code in (200, 201):
-            return True, f"Added {email} as Maintainer."
-        elif add_resp.status_code == 409:
-            return True, f"{email} is already a member."
+        if resp.status_code in (200, 201):
+            body = resp.json()
+            if body.get("status") == "error":
+                msg = body.get("message", {})
+                if isinstance(msg, dict):
+                    detail = next(iter(msg.values()), "")
+                else:
+                    detail = str(msg)
+                if "already" in str(detail).lower() or "greater than" in str(detail).lower():
+                    return True, f"{email} already has access."
+                return False, f"Invitation error: {detail}"
+            return True, f"Invited {email} as Maintainer."
+        elif resp.status_code == 409:
+            return True, f"{email} already has access."
         else:
-            body = add_resp.json()
-            return False, f"Failed to add member (HTTP {add_resp.status_code}): {body.get('message', body)}"
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            return False, f"Failed (HTTP {resp.status_code}): {body.get('message', resp.text[:200])}"
     except Exception as e:
-        return False, f"Error adding member: {e}"
+        return False, f"Error inviting member: {e}"
 
 
 EDITION_OPTIONS = ["ENTERPRISE", "BUSINESS_CRITICAL", "STANDARD"]

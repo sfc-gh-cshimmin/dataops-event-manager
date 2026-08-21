@@ -3,13 +3,13 @@ entities:
   dataops_event_manager:
     type: streamlit
     identifier:
-      name: DATAOPS_EVENT_MANAGER
-      schema: DATAOPS_EVENTS
-      database: INTERNAL_DATA
+      name: DOL_EVENT_MANAGER
+      schema: DOL_EVENT_MANAGER_APP
+      database: GRE_APPS
     title: "DataOps Event Manager"
     runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
-    query_warehouse: TASK_WH
+    query_warehouse: COMPUTE_WH
     main_file: app.py
     artifacts:
       - app.py
@@ -22,4 +22,4 @@ entities:
     external_access_integrations:
       - DATAOPS_LIVE_EAI
     secrets:
-      DATAOPS_PAT: INTERNAL_DATA.DATAOPS_EVENTS.DATAOPS_PAT
+      DATAOPS_PAT: GRE_APPS.DOL_EVENT_MANAGER_APP.DATAOPS_PAT
