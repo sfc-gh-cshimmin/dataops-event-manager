@@ -135,6 +135,38 @@ def _gitlab_add_member(token: str, project_path: str, email: str, access_level: 
         return False, f"Error inviting member: {e}"
 
 
+def _gitlab_copy_variables(token: str, source_path: str, dest_path: str) -> tuple[bool, str]:
+    """Copy CI/CD variables from source project to dest project.
+    Returns (success, message).
+    """
+    headers = {"PRIVATE-TOKEN": token, "Content-Type": "application/json"}
+    _src = _urlparse.quote(source_path, safe="")
+    _dst = _urlparse.quote(dest_path, safe="")
+    try:
+        resp = _requests.get(f"{GITLAB_BASE}/projects/{_src}/variables", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return False, f"Could not read variables from source (HTTP {resp.status_code})."
+        variables = resp.json()
+        if not variables:
+            return True, "No CI/CD variables to copy."
+        copied = 0
+        for var in variables:
+            payload = {
+                "key": var["key"],
+                "value": var["value"],
+                "variable_type": var.get("variable_type", "env_var"),
+                "protected": var.get("protected", False),
+                "masked": var.get("masked", False),
+                "environment_scope": var.get("environment_scope", "*"),
+            }
+            cr = _requests.post(f"{GITLAB_BASE}/projects/{_dst}/variables", headers=headers, json=payload, timeout=10)
+            if cr.status_code in (200, 201):
+                copied += 1
+        return True, f"Copied {copied}/{len(variables)} CI/CD variable(s)."
+    except Exception as e:
+        return False, f"Error copying variables: {e}"
+
+
 EDITION_OPTIONS = ["ENTERPRISE", "BUSINESS_CRITICAL", "STANDARD"]
 DELIVERY_FORMAT_OPTIONS = ["HANDS_ON_LAB", "WORKSHOP", "TRAINING", "HACKATHON", "OTHER"]
 
@@ -321,6 +353,7 @@ def render(client: DataOpsClient):
         _slug = st.session_state.pop("_create_slug", "")
         _instructor_emails = st.session_state.pop("_pending_instructors", [])
         _instructor_reconfigure = st.session_state.pop("_pending_instructor_reconfigure", False)
+        _is_fork_mode = st.session_state.pop("_pending_is_fork_mode", False)
         st.session_state.pop("_create_pending", None)
         with st.spinner("Creating event..."):
             try:
@@ -346,13 +379,29 @@ def render(client: DataOpsClient):
                 st.session_state["_just_created"]["instructor_reconfigure"] = True
             except Exception as _pe:
                 st.session_state["_just_created"]["instructor_reconfigure_error"] = str(_pe)
-        # Add instructors after successful event creation
+        # Add instructors after successful event creation (one at a time to avoid all-or-nothing failure)
         if _instructor_emails:
-            try:
-                client.add_instructors(_slug, _instructor_emails)
-                st.session_state["_just_created"]["instructors_added"] = _instructor_emails
-            except Exception as _ie:
-                st.session_state["_just_created"]["instructor_error"] = str(_ie)
+            _added = []
+            _failed = []
+            for _em in _instructor_emails:
+                try:
+                    client.add_instructors(_slug, [_em])
+                    _added.append(_em)
+                except Exception as _ie:
+                    _failed.append((_em, str(_ie)))
+            if _added:
+                st.session_state["_just_created"]["instructors_added"] = _added
+            if _failed:
+                st.session_state["_just_created"]["instructor_errors"] = _failed
+        # Grant GitLab maintainer access to instructors if event uses a forked repo
+        _configure_project = _payload.get("dataops_configure_project_path", "")
+        if _is_fork_mode and _configure_project and _instructor_emails:
+            _token = get_token()
+            _repo_access_results = []
+            for _email in _instructor_emails:
+                _ok, _msg = _gitlab_add_member(_token, _configure_project, _email)
+                _repo_access_results.append((_email, _ok, _msg))
+            st.session_state["_just_created"]["repo_access_results"] = _repo_access_results
         st.rerun()
 
     # Show persistent success page after event creation
@@ -391,8 +440,16 @@ def render(client: DataOpsClient):
         # Instructor results
         if _jc.get("instructors_added"):
             st.success(f"✅ Instructors added: {', '.join(_jc['instructors_added'])}")
-        elif _jc.get("instructor_error"):
-            st.warning(f"⚠️ Event created but instructor assignment failed: {_jc['instructor_error']}")
+        if _jc.get("instructor_errors"):
+            for _em, _err in _jc["instructor_errors"]:
+                st.warning(f"⚠️ Could not add instructor {_em}: {_err}")
+        # Repo access results (fork mode only)
+        if _jc.get("repo_access_results"):
+            for _email, _ok, _msg in _jc["repo_access_results"]:
+                if _ok:
+                    st.caption(f"🔑 Repo access: {_msg}")
+                else:
+                    st.warning(f"⚠️ Repo access for {_email}: {_msg}")
         if st.button("Create Another Event", key="create_another_btn"):
             st.session_state.pop("_just_created", None)
             st.rerun()
@@ -710,6 +767,9 @@ def render(client: DataOpsClient):
             _mem_result = st.session_state.get(f"_fork_member_{_std_fork_path}")
             if _mem_result:
                 st.caption(f"👤 {_mem_result}")
+            _vars_result = st.session_state.get(f"_fork_vars_{_std_fork_path}")
+            if _vars_result:
+                st.caption(f"🔧 {_vars_result}")
             elif isinstance(_std_fork_state, str) and _std_fork_state:
                 st.error(_std_fork_state)
 
@@ -726,6 +786,8 @@ def render(client: DataOpsClient):
                             if prefill.get("attendee_email"):
                                 _mem_ok, _mem_msg = _gitlab_add_member(_token, _std_fork_path, prefill["attendee_email"])
                                 st.session_state[f"_fork_member_{_std_fork_path}"] = _mem_msg
+                            _cv_ok, _cv_msg = _gitlab_copy_variables(_token, configure_project_val, _std_fork_path)
+                            st.session_state[f"_fork_vars_{_std_fork_path}"] = _cv_msg
                         else:
                             st.session_state[_std_fork_key] = _msg
                         st.rerun()
@@ -761,6 +823,9 @@ def render(client: DataOpsClient):
         _mem_result_custom = st.session_state.get(f"_fork_member_{configure_project_val}")
         if _mem_result_custom:
             st.caption(f"👤 {_mem_result_custom}")
+        _vars_result_custom = st.session_state.get(f"_fork_vars_{configure_project_val}")
+        if _vars_result_custom:
+            st.caption(f"🔧 {_vars_result_custom}")
         elif _cp_status == 404:
             st.success(f"✅ Fork path `{configure_project_val}` is available.")
         elif isinstance(_fork_state, str) and _fork_state:
@@ -780,6 +845,8 @@ def render(client: DataOpsClient):
                         if prefill.get("attendee_email"):
                             _mem_ok, _mem_msg = _gitlab_add_member(_token, configure_project_val, prefill["attendee_email"])
                             st.session_state[f"_fork_member_{configure_project_val}"] = _mem_msg
+                        _cv_ok, _cv_msg = _gitlab_copy_variables(_token, _fork_parent, configure_project_val)
+                        st.session_state[f"_fork_vars_{configure_project_val}"] = _cv_msg
                     else:
                         st.session_state[_fork_key] = _msg
                     st.rerun()
@@ -978,4 +1045,5 @@ def render(client: DataOpsClient):
     st.session_state["_pending_slug"] = slug
     st.session_state["_pending_instructors"] = _instructor_emails
     st.session_state["_pending_instructor_reconfigure"] = instructor_reconfigure
+    st.session_state["_pending_is_fork_mode"] = (st.session_state.get("cp_mode_toggle") == "Fork a repo")
     st.rerun()
