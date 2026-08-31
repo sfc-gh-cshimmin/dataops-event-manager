@@ -3,7 +3,7 @@
 import streamlit as st
 from datetime import datetime, timezone, timedelta
 from api_client import DataOpsClient, DataOpsAPIError
-from utils import format_datetime
+from utils import format_datetime, generate_clone_slug
 
 
 def render(client: DataOpsClient):
@@ -91,7 +91,7 @@ def render(client: DataOpsClient):
 
     # Quick actions
     st.divider()
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b, col_c, col_d = st.columns(4)
     with col_a:
         if st.button("✏️ Edit this event"):
             st.session_state["selected_event_slug"] = slug
@@ -105,6 +105,33 @@ def render(client: DataOpsClient):
     with col_c:
         if st.button("⛔ Decommission Event", type="primary"):
             st.session_state["_confirm_decomm_slug"] = slug
+    with col_d:
+        if st.button("📋 Clone Event"):
+            st.session_state["_view_clone_source"] = slug
+
+    # Clone confirmation
+    if st.session_state.get("_view_clone_source") == slug:
+        _clone_instr = st.checkbox("Carry over instructors", value=True, key="view_clone_instr")
+        if st.button("Confirm Clone", type="primary", key="view_clone_confirm"):
+            with st.spinner("Generating clone..."):
+                _new_slug = generate_clone_slug(client, slug)
+                _clone_data = {
+                    "slug": _new_slug,
+                    "name": event.get("name", ""),
+                    "start_date": (event.get("start_datetime") or "")[:10],
+                    "end_date": (event.get("end_datetime") or "")[:10],
+                    "decommission_date": (event.get("decommission_datetime") or "")[:10],
+                    "build_date": (event.get("build_datetime") or "")[:10],
+                    "pool_size": str(event.get("initial_pool_size", 0)),
+                    "region": event.get("snowflake_account_region_group", ""),
+                    "edition": event.get("snowflake_account_edition", "ENTERPRISE"),
+                    "configure_project": event.get("project", ""),
+                    "instructors": [i.get("email", i) if isinstance(i, dict) else i for i in (event.get("instructors") or [])] if _clone_instr else [],
+                }
+                st.session_state["_clone_event_data"] = _clone_data
+                st.session_state.pop("_view_clone_source", None)
+                st.session_state["nav_override"] = "Create Event"
+                st.rerun()
 
     if st.session_state.get("_confirm_decomm_slug") == slug:
         st.warning(

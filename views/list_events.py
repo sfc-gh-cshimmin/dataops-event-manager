@@ -1,10 +1,11 @@
 """List events with inline detail view and approve action."""
 
 import streamlit as st
+import json
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from api_client import DataOpsClient, DataOpsAPIError
-from utils import format_datetime
+from utils import format_datetime, generate_clone_slug
 
 
 def _render_event_detail(client: DataOpsClient, slug: str):
@@ -93,7 +94,7 @@ def _render_event_detail(client: DataOpsClient, slug: str):
 
     # Quick actions
     st.divider()
-    act1, act2, act3 = st.columns(3)
+    act1, act2, act3, act4 = st.columns(4)
     with act1:
         if st.button("✏️ Edit this event", key=f"edit_{slug}"):
             st.session_state["selected_event_slug"] = slug
@@ -107,6 +108,34 @@ def _render_event_detail(client: DataOpsClient, slug: str):
     with act3:
         if st.button("⛔ Decommission Event", type="primary", key=f"decomm_event_{slug}"):
             st.session_state["_list_confirm_decomm_slug"] = slug
+    with act4:
+        if st.button("📋 Clone Event", key=f"clone_{slug}"):
+            st.session_state["_clone_source_slug"] = slug
+
+    # Clone confirmation
+    if st.session_state.get("_clone_source_slug") == slug:
+        _clone_instr = st.checkbox("Carry over instructors", value=True, key=f"clone_instr_{slug}")
+        if st.button("Confirm Clone", type="primary", key=f"clone_confirm_{slug}"):
+            with st.spinner("Generating clone..."):
+                _evt = client.get_event_details(slug)
+                _new_slug = generate_clone_slug(client, slug)
+                _clone_data = {
+                    "slug": _new_slug,
+                    "name": _evt.get("name", ""),
+                    "start_date": (_evt.get("start_datetime") or "")[:10],
+                    "end_date": (_evt.get("end_datetime") or "")[:10],
+                    "decommission_date": (_evt.get("decommission_datetime") or "")[:10],
+                    "build_date": (_evt.get("build_datetime") or "")[:10],
+                    "pool_size": str(_evt.get("initial_pool_size", 0)),
+                    "region": _evt.get("snowflake_account_region_group", ""),
+                    "edition": _evt.get("snowflake_account_edition", "ENTERPRISE"),
+                    "configure_project": _evt.get("project", ""),
+                    "instructors": [i.get("email", i) if isinstance(i, dict) else i for i in (_evt.get("instructors") or [])] if _clone_instr else [],
+                }
+                st.session_state["_clone_event_data"] = _clone_data
+                st.session_state.pop("_clone_source_slug", None)
+                st.session_state["nav_override"] = "Create Event"
+                st.rerun()
 
     if st.session_state.get("_list_confirm_decomm_slug") == slug:
         st.warning(
@@ -178,27 +207,10 @@ def render(client: DataOpsClient):
 
     st.caption(f"{len(events)} event(s) found")
 
-    approved_this_session = st.session_state.get("_list_approved_slugs", set())
-    rows = []
-    for ev in events:
-        slug_val = ev.get("slug", "")
-        is_app = ev.get("is_approved", False) or slug_val in approved_this_session
-        rows.append({
-            "Slug": slug_val,
-            "Name": ev.get("name", ""),
-            "Start": (ev.get("start_date") or "")[:10],
-            "End": (ev.get("end_date") or "")[:10],
-            "Pool": ev.get("pool_size", ""),
-            "Approved": "✅" if is_app else "⏳",
-        })
-
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
-
     slugs = [ev.get("slug", "") for ev in events if ev.get("slug")]
     if not slugs:
         return
 
-    st.divider()
     preselect = st.session_state.get("selected_event_slug", "")
     default_idx = slugs.index(preselect) if preselect in slugs else 0
 

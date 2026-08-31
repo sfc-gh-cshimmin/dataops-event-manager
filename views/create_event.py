@@ -276,8 +276,33 @@ def _parse_date_param(value: str | None) -> date | None:
 
 
 def _read_prefill() -> dict:
-    """Read pre-fill values from pasted JSON (session state) or URL query parameters."""
-    # Check for pasted JSON first
+    """Read pre-fill values from clone data, pasted JSON, or URL query parameters."""
+    # Check for clone event data first (from Clone button)
+    _clone = st.session_state.get("_clone_event_data")
+    if _clone and isinstance(_clone, dict):
+        _end = _parse_date_param(_clone.get("end_date"))
+        _decomm = _parse_date_param(_clone.get("decommission_date")) or (_end + timedelta(days=2) if _end else None)
+        return {
+            "slug":              _clone.get("slug", ""),
+            "name":              _clone.get("name", ""),
+            "start_date":        _parse_date_param(_clone.get("start_date")),
+            "end_date":          _end,
+            "decommission_date": _decomm,
+            "build_date":        _parse_date_param(_clone.get("build_date")),
+            "pool_size":         int(_clone["pool_size"]) if str(_clone.get("pool_size", "")).isdigit() else 0,
+            "attendee_email":    "",
+            "attendee_name":     "",
+            "region":            _clone.get("region", "").lower().replace("-", "_"),
+            "delivery_format":   _map_delivery_format(_clone.get("delivery_format", "")),
+            "configure_project": _clone.get("configure_project", ""),
+            "fork_parent":       "",
+            "salesforce_id":     "",
+            "timezone":          "",
+            "edition":           _clone.get("edition", "ENTERPRISE"),
+            "clone_instructors": _clone.get("instructors", []),
+        }
+
+    # Check for pasted JSON
     raw_json = st.session_state.get("_pasted_event_json", "")
     if raw_json:
         try:
@@ -301,6 +326,8 @@ def _read_prefill() -> dict:
                     "configure_project": data.get("configure_project", ""),
                     "fork_parent":       data.get("fork_parent", ""),
                     "timezone":          data.get("timezone", ""),
+                    "edition":           data.get("edition", "ENTERPRISE"),
+                    "clone_instructors": [],
                 }
         except Exception:
             pass
@@ -325,6 +352,9 @@ def _read_prefill() -> dict:
         "fork_parent":       qp.get("fork_parent", ""),
         "salesforce_id":     qp.get("salesforce_id", ""),
         "timezone":          qp.get("timezone", ""),
+        "edition":           qp.get("edition", "ENTERPRISE"),
+        "clone_instructors": [],
+        "instructor_emails": qp.get("instructor_emails", ""),
     }
 
 
@@ -542,7 +572,7 @@ def render(client: DataOpsClient):
             _token = get_token()
             _headers = {"PRIVATE-TOKEN": _token}
             _dc_results = []
-            for _gid in ["snowflake"]:
+            for _gid in ["snowflake%2Fhands-on-labs", "snowflake%2Fhands-on-lab-drafts"]:
                 _page = 1
                 while True:
                     try:
@@ -562,6 +592,7 @@ def render(client: DataOpsClient):
                     except Exception:
                         break
             _dc_results = [p for p in _dc_results if not p.startswith("snowflake/instances/")]
+            st.session_state["_dc_search_results"] = _dc_results or []
 
         _dc_results = st.session_state.get("_dc_search_results", [])
         if _dc_results:
@@ -635,7 +666,7 @@ def render(client: DataOpsClient):
                 _token = get_token()
                 _headers = {"PRIVATE-TOKEN": _token}
                 _results = []
-                for _gid in ["snowflake"]:
+                for _gid in ["snowflake%2Fhands-on-labs", "snowflake%2Fhands-on-lab-drafts"]:
                     _page = 1
                     while True:
                         try:
@@ -711,6 +742,9 @@ def render(client: DataOpsClient):
         key="configure_project_input",
         help="e.g. snowflake/hands-on-labs/zero-to-snowflake-v-2 — auto-filled from fork parent + slug, editable.",
     )
+    if configure_project_val:
+        _cp_url = f"https://app.dataops.live/{configure_project_val}"
+        st.caption(f"[Open in GitLab]({_cp_url})")
     salesforce_id_val = st.text_input(
         "Salesforce Campaign ID",
         value=prefill["salesforce_id"],
@@ -895,7 +929,8 @@ def render(client: DataOpsClient):
         col_a, col_b = st.columns(2)
         with col_a:
             pool_size = st.number_input("Pool Size", min_value=0, value=prefill["pool_size"], step=1)
-            edition = st.selectbox("Snowflake Edition", EDITION_OPTIONS, index=0)
+            _edition_idx = EDITION_OPTIONS.index(prefill.get("edition", "ENTERPRISE")) if prefill.get("edition") in EDITION_OPTIONS else 0
+            edition = st.selectbox("Snowflake Edition", EDITION_OPTIONS, index=_edition_idx)
             region = st.selectbox(
                 "Region Group", REGION_OPTIONS,
                 index=REGION_OPTIONS.index(prefill["region"]) if prefill["region"] in REGION_OPTIONS else 0,
@@ -907,7 +942,7 @@ def render(client: DataOpsClient):
             express_hours = st.number_input(
                 "Express Token Duration (hours)", min_value=1, value=24, step=1, disabled=not is_express
             )
-            instructor_reconfigure = st.checkbox("Instructor Reconfigure")
+            instructor_reconfigure = st.checkbox("Instructor Reconfigure", value=bool(_prefill_fp))
 
         allowed_domains = st.text_input("Allowed Email Domains", help="Comma-separated, e.g. snowflake.com, acme.org")
 
@@ -915,10 +950,12 @@ def render(client: DataOpsClient):
         st.subheader("Instructors")
         if prefill["attendee_email"]:
             st.caption(f"Requestor will be added as instructor automatically: **{prefill['attendee_name']}** &lt;{prefill['attendee_email']}&gt;")
+        _clone_instr_default = ", ".join(prefill.get("clone_instructors", [])) or prefill.get("instructor_emails", "")
         additional_instructors_raw = st.text_input(
             "Additional Instructor Emails",
+            value=_clone_instr_default,
             placeholder="alice@snowflake.com, bob@snowflake.com",
-            help="Comma-separated. Note: additional instructors from the LIFT ticket are not yet available automatically.",
+            help="Comma-separated. Pre-filled from cloned event if applicable.",
         )
 
         # Attendee pre-fill (shown read-only so user knows what will be submitted)
@@ -949,8 +986,12 @@ def render(client: DataOpsClient):
             with _pc2:
                 def _fmt_dt(iso: str) -> str:
                     try:
-                        _dt = datetime.fromisoformat(iso)
-                        return _dt.strftime("%b %d, %Y at %I:%M %p") + f" ({iso[-6:]})"
+                        _dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                        # Convert UTC back to creator's local time for display
+                        creator_tz = st.session_state.get("creator_tz", "PDT")
+                        tz_hours = _TZ_OFFSETS.get(creator_tz.strip().upper(), -7)
+                        _local = _dt + timedelta(hours=tz_hours)
+                        return _local.strftime("%b %d, %Y at %I:%M %p") + f" ({creator_tz})"
                     except Exception:
                         return iso
                 if _p.get("build_date"): st.markdown(f"**Build Date:** {_fmt_dt(_p['build_date'])}")
