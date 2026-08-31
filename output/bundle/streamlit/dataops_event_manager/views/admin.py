@@ -1,1 +1,1 @@
-/Users/cshimmin/dataops-event-manager/views/admin.py
+/Users/cshimmin/dataops-event-manager-backup/views/admin.py

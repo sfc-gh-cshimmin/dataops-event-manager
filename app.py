@@ -20,7 +20,7 @@ def get_client() -> DataOpsClient:
     return DataOpsClient(token)
 
 
-NAV_OPTIONS = ["Manage Events", "View Event", "Create Event", "Patch Event", "Decommission Account", "Admin"]
+NAV_OPTIONS = ["Manage Events", "View Event", "Create Event", "Patch Event", "Health Monitor", "Decommission Account", "Admin"]
 
 # Map ?page= param values to nav labels
 _PAGE_PARAM_MAP = {
@@ -92,6 +92,10 @@ def main():
     )
 
     # Route to views
+    # Clear stale clone data when navigating away from Create Event
+    if nav != "Create Event":
+        st.session_state.pop("_clone_event_data", None)
+
     if nav == "Manage Events":
         from views.list_events import render
         render(client)
@@ -103,6 +107,9 @@ def main():
         render(client)
     elif nav == "Patch Event":
         from views.patch_event import render
+        render(client)
+    elif nav == "Health Monitor":
+        from views.health_monitor import render
         render(client)
     elif nav == "Decommission Account":
         from views.decommission import render

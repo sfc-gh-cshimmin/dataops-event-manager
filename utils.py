@@ -58,3 +58,33 @@ def parse_comma_list(text: str) -> list[str]:
         return []
     import re
     return [item for item in re.split(r"[,\s]+", text.strip()) if item]
+
+
+def generate_clone_slug(client, original_slug: str) -> str:
+    """Generate a unique clone slug by appending/incrementing a -N suffix.
+    Checks availability via client.get_event() until a 404 (available) is found.
+    Truncates the base to stay within 31 chars.
+    """
+    from api_client import DataOpsAPIError
+    match = re.match(r'^(.*)-(\d+)$', original_slug)
+    if match:
+        base = match.group(1)
+        num = int(match.group(2)) + 1
+    else:
+        base = original_slug
+        num = 1
+
+    for _ in range(100):
+        suffix = f"-{num}"
+        max_base_len = 31 - len(suffix)
+        candidate = base[:max_base_len].rstrip("-") + suffix
+        try:
+            client.get_event(candidate)
+            num += 1  # slug taken, try next
+        except DataOpsAPIError as e:
+            if e.status_code == 404:
+                return candidate  # available
+            num += 1
+        except Exception:
+            return candidate  # network error, assume available
+    return base[:27].rstrip("-") + f"-{num}"

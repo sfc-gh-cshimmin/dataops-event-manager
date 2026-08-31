@@ -1,1 +1,1 @@
-/Users/cshimmin/dataops-event-manager/snowflake_helpers.py
+/Users/cshimmin/dataops-event-manager-backup/snowflake_helpers.py
